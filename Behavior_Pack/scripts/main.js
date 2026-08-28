@@ -16,6 +16,7 @@ const deviceMenuCooldowns = new Set();
 const HOSTILE_MOBS = new Set([
   "minecraft:zombie",
   "minecraft:zombie_villager",
+  "minecraft:zombie_villager_v2",
   "minecraft:husk",
   "minecraft:drowned",
   "minecraft:skeleton",
@@ -33,7 +34,7 @@ const HOSTILE_MOBS = new Set([
   "minecraft:endermite",
   "minecraft:pillager",
   "minecraft:vindicator",
-  "minecraft:evoker",
+  "minecraft:evocation_illager",
   "minecraft:ravager",
   "minecraft:vex",
   "minecraft:warden",
@@ -43,7 +44,16 @@ const HOSTILE_MOBS = new Set([
   "minecraft:piglin_brute",
   "minecraft:shulker",
   "minecraft:breeze",
-  "minecraft:bogged"
+  "minecraft:bogged",
+  "minecraft:zoglin",
+  "minecraft:guardian",
+  "minecraft:elder_guardian",
+  "minecraft:creaking"
+]);
+
+const LIQUID_BLOCKS = new Set([
+  "minecraft:water", "minecraft:flowing_water",
+  "minecraft:lava", "minecraft:flowing_lava"
 ]);
 
 // Kid-friendly block selection list
@@ -105,9 +115,7 @@ const BIOME_OPTIONS = [
   { name: "Crimson Forest 🍄", id: "minecraft:crimson_forest", dimensions: ["nether"] },
   { name: "Warped Forest 🟦", id: "minecraft:warped_forest", dimensions: ["nether"] },
   { name: "Basalt Deltas ⬛", id: "minecraft:basalt_deltas", dimensions: ["nether"] },
-  { name: "The End 🐉", id: "minecraft:the_end", dimensions: ["the_end"] },
-  { name: "End Highlands 🌌", id: "minecraft:end_highlands", dimensions: ["the_end"] },
-  { name: "Small End Islands ✨", id: "minecraft:small_end_islands", dimensions: ["the_end"] }
+  { name: "The End 🐉", id: "minecraft:the_end", dimensions: ["the_end"] }
 ];
 
 const STRUCTURE_OPTIONS = [
@@ -131,10 +139,12 @@ const STRUCTURE_OPTIONS = [
 ];
 
 const CLEANUP_PROJECTILES = new Set([
-  "minecraft:arrow", "minecraft:trident", "minecraft:snowball", "minecraft:egg",
+  "minecraft:arrow", "minecraft:thrown_trident", "minecraft:snowball", "minecraft:egg",
   "minecraft:ender_pearl", "minecraft:xp_bottle", "minecraft:splash_potion",
   "minecraft:lingering_potion", "minecraft:fireball", "minecraft:small_fireball",
-  "minecraft:dragon_fireball", "minecraft:wither_skull"
+  "minecraft:dragon_fireball", "minecraft:wither_skull", "minecraft:wither_skull_dangerous",
+  "minecraft:shulker_bullet", "minecraft:llama_spit", "minecraft:wind_charge_projectile",
+  "minecraft:breeze_wind_charge_projectile"
 ]);
 
 const CLEANUP_VEHICLES = new Set([
@@ -150,6 +160,20 @@ const BASE_TEMPLATES = [
   { key: "tree_house", name: "Tree House 🌳", size: "11×15", description: "Raised home with a walk-up staircase" },
   { key: "bunker", name: "Underground Bunker 🛡️", size: "11×13", description: "Hidden rooms beneath the ground" }
 ];
+
+/**
+ * `isValid` is a method on older @minecraft/server versions and a property on
+ * newer ones. Reading it either way keeps the pack working across API bumps.
+ */
+function isValidEntity(entity) {
+  if (!entity) return false;
+  try {
+    const valid = entity.isValid;
+    return typeof valid === "function" ? entity.isValid() : valid !== false;
+  } catch (e) {
+    return false;
+  }
+}
 
 /**
  * Give Helper Device to player if they don't already have one
@@ -211,7 +235,7 @@ function giveExtraDevice(player) {
 world.afterEvents.playerSpawn.subscribe((event) => {
   const player = event.player;
   system.runTimeout(() => {
-    if (player && player.isValid()) {
+    if (isValidEntity(player)) {
       giveDeviceIfMissing(player);
     }
   }, 20);
@@ -232,6 +256,35 @@ if (chatSendSignal) {
 }
 
 /**
+ * `world.beforeEvents.chatSend` only exists in the beta script API, so on the
+ * stable module this pack targets the chat shortcuts above never fire.
+ * `/scriptevent tools:device` is the fallback that always works.
+ */
+if (system.afterEvents && system.afterEvents.scriptEventReceive) {
+  system.afterEvents.scriptEventReceive.subscribe((event) => {
+    if (!["tools:device", "tools:wand", "tools:helper"].includes(event.id)) return;
+    const source = event.sourceEntity;
+    if (!source) return;
+    const player = world.getAllPlayers().find((p) => p.id === source.id);
+    if (player) giveDeviceIfMissing(player, true);
+  }, { namespaces: ["tools"] });
+}
+
+/**
+ * Release per-player state when someone leaves the world
+ */
+if (world.afterEvents.playerLeave) {
+  world.afterEvents.playerLeave.subscribe((event) => {
+    const previewId = activePreviews.get(event.playerId);
+    if (previewId !== undefined) {
+      system.clearRun(previewId);
+      activePreviews.delete(event.playerId);
+    }
+    deviceMenuCooldowns.delete(event.playerId);
+  });
+}
+
+/**
  * Trigger menu when player uses Helper Device
  */
 function handleDeviceUse(event) {
@@ -240,7 +293,7 @@ function handleDeviceUse(event) {
   if (deviceMenuCooldowns.has(player.id)) return;
   deviceMenuCooldowns.add(player.id);
   system.run(() => {
-    if (player.isValid()) openMainMenu(player);
+    if (isValidEntity(player)) openMainMenu(player);
   });
   system.runTimeout(() => deviceMenuCooldowns.delete(player.id), 10);
 }
@@ -378,7 +431,7 @@ function openLifeSaversMenu(player) {
     .body("Quick safety tools:")
     .button("❤️ Instant Heal & Feed\n§7Full health hearts and hunger bar", "textures/items/apple_golden")
     .button("🛡️ Monster Begone!\n§7Vanish hostile monsters within 35 blocks", "textures/items/diamond_sword")
-    .button("⬆️ Escape to Surface\n§7Cave rescue - warp straight up to fresh air", "textures/items/scaffolding")
+    .button("⬆️ Escape to Surface\n§7Cave rescue - warp straight up to fresh air", "textures/blocks/ladder")
     .button("🔥 Lava & Fire Shield\n§7Put out fire & gain Fire Resistance", "textures/items/bucket_lava")
     .button("🥛 Cure All Effects\n§7Clear poison, slowness, wither, blindness", "textures/items/bucket_milk")
     .button("⬅️ Back to Main Menu\n§7Return to categories", "textures/ui/arrow_left");
@@ -451,7 +504,7 @@ function escapeToSurface(player) {
     for (let y = range.max - 2; y > startY; y--) {
       try {
         const block = dim.getBlock({ x: px, y: y, z: pz });
-        if (block && !block.isAir && block.typeId !== "minecraft:lava" && block.typeId !== "minecraft:water") {
+        if (block && !block.isAir && !LIQUID_BLOCKS.has(block.typeId)) {
           const above1 = dim.getBlock({ x: px, y: y + 1, z: pz });
           const above2 = dim.getBlock({ x: px, y: y + 2, z: pz });
           if (above1 && above1.isAir && above2 && above2.isAir) {
@@ -476,16 +529,44 @@ function escapeToSurface(player) {
   }
 }
 
+/**
+ * Finds standing room (two air blocks over solid ground) above the player,
+ * or null when there is nowhere safe within `maxLift` blocks.
+ */
+function findSafeSpotAbove(player, maxLift = 8) {
+  const dim = player.dimension;
+  const loc = player.location;
+  const x = Math.floor(loc.x);
+  const z = Math.floor(loc.z);
+  const range = getDimensionBuildRange(player);
+  for (let lift = 1; lift <= maxLift; lift++) {
+    const y = Math.floor(loc.y) + lift;
+    if (y + 1 > range.max) break;
+    try {
+      const feet = dim.getBlock({ x: x, y: y, z: z });
+      const head = dim.getBlock({ x: x, y: y + 1, z: z });
+      const floor = dim.getBlock({ x: x, y: y - 1, z: z });
+      if (feet && feet.isAir && head && head.isAir && floor && !floor.isAir && !LIQUID_BLOCKS.has(floor.typeId)) {
+        return { x: x + 0.5, y: y, z: z + 0.5 };
+      }
+    } catch (e) {
+      break;
+    }
+  }
+  return null;
+}
+
 function lavaRescue(player) {
   try {
     player.extinguishFire();
-    const loc = player.location;
-    player.teleport({ x: loc.x, y: loc.y + 2, z: loc.z });
+    const safeSpot = findSafeSpotAbove(player);
+    if (safeSpot) player.teleport(safeSpot);
     Promise.all([
       player.runCommandAsync("effect @s fire_resistance 120 1 true"),
       player.runCommandAsync("effect @s instant_health 1 255 true")
     ]).then(() => {
       player.sendMessage("§6🔥 Fire Shield Activated! Fire extinguished & 2 minutes of Fire Resistance granted!§r");
+      if (!safeSpot) player.sendMessage("§eNo open ground was found above you, so you stayed put. Use ⬆️ Escape to Surface to get out.§r");
       player.playSound("random.splash", { volume: 0.9, pitch: 1.0 });
     }).catch((err) => player.sendMessage(`§cCould not apply the fire shield: ${err}§r`));
   } catch (err) {
@@ -508,7 +589,7 @@ function openSuperpowersMenu(player) {
   const form = new ActionFormData()
     .title("⚡ Superpowers & Flying")
     .body("Choose a superpower:")
-    .button("👀 Night Vision (15 Min)\n§7See clearly in dark caves and underwater", "textures/items/potion_bottle_nightvision")
+    .button("👀 Night Vision (15 Min)\n§7See clearly in dark caves and underwater", "textures/items/potion_bottle_nightVision")
     .button("🏃 Super Speed & Jump (5 Min)\n§7Run super fast and jump high", "textures/items/sugar")
     .button("🪽 Get Elytra & Flight Rockets\n§7Fly around the world with glider wings", "textures/items/elytra")
     .button("⬅️ Back to Main Menu\n§7Return to categories", "textures/ui/arrow_left");
@@ -580,10 +661,10 @@ function openBuilderToolsMenu(player) {
     .button("🕳️ Dig an Empty Hole\n§7Clear out ground with 3D glowing preview", "textures/items/diamond_shovel")
     .button("🧱 Build / Fill Blocks\n§7Place blocks or rooms with 3D guide", "textures/items/brick")
     .button("🚜 Flatten / Level Ground\n§7Level land for building with preview", "textures/items/iron_hoe")
-    .button("🪜 Instant Underfoot Platform\n§7Create a platform right under your feet", "textures/items/scaffolding")
+    .button("🪜 Instant Underfoot Platform\n§7Create a platform right under your feet", "textures/blocks/ladder")
     .button("🏠 Starter Base Templates\n§7Houses, fort, tree house, and bunker", "textures/items/bed_red")
-    .button("🌉 Bridge & Stair Builder\n§7Build safe paths in the direction you face", "textures/items/oak_planks")
-    .button("💡 Light Up Area\n§7Place torches on dark surfaces around you", "textures/items/torch_on")
+    .button("🌉 Bridge & Stair Builder\n§7Build safe paths in the direction you face", "textures/blocks/planks_oak")
+    .button("💡 Light Up Area\n§7Place torches on dark surfaces around you", "textures/blocks/torch_on")
     .button("🧹 Area Cleanup\n§7Remove selected clutter around you", "textures/items/bucket_empty")
     .button("↩️ Undo Last Build/Hole\n§7Revert your last building action", "textures/ui/refresh")
     .button("⬅️ Back to Main Menu\n§7Return to categories", "textures/ui/arrow_left");
@@ -665,12 +746,13 @@ function startPreview(player, bounds, particleName, promptText, onConfirm) {
   }
 
   const dimension = player.dimension;
+  const dimensionId = dimension.id;
   let ticks = 0;
   const maxTicks = 300; // 15 seconds
 
   const intervalId = system.runInterval(() => {
     ticks += 5;
-    if (ticks > maxTicks || !player.isValid()) {
+    if (ticks > maxTicks || !isValidEntity(player)) {
       system.clearRun(intervalId);
       activePreviews.delete(player.id);
       return;
@@ -690,7 +772,7 @@ function startPreview(player, bounds, particleName, promptText, onConfirm) {
     .button2("❌ Cancel");
 
   system.runTimeout(() => {
-    if (!player.isValid()) return;
+    if (!isValidEntity(player)) return;
     confirmForm.show(player).then((res) => {
       if (activePreviews.has(player.id)) {
         system.clearRun(activePreviews.get(player.id));
@@ -698,6 +780,10 @@ function startPreview(player, bounds, particleName, promptText, onConfirm) {
       }
 
       if (!res.canceled && res.selection === 0) {
+        if (player.dimension.id !== dimensionId) {
+          player.sendMessage("§eYou changed dimensions after opening the preview. Open the builder again here.§r");
+          return;
+        }
         onConfirm();
       } else {
         player.sendMessage("§7Action canceled.§r");
@@ -775,11 +861,31 @@ function calculateBounds(player, width, length, verticalSize, verticalDir = "up"
   };
 }
 
-function getDimensionBuildRange(player) {
-  const dimensionName = String(player.dimension.id).replace(/^minecraft:/, "");
+function getBuildRangeForDimension(dimensionId) {
+  const dimensionName = String(dimensionId).replace(/^minecraft:/, "");
   if (dimensionName === "nether") return { min: 0, max: 127 };
   if (dimensionName === "the_end") return { min: 0, max: 255 };
   return { min: -64, max: 319 };
+}
+
+function getDimensionBuildRange(player) {
+  return getBuildRangeForDimension(player.dimension.id);
+}
+
+/**
+ * Returns a Y value the player can safely be placed at, or null if none was
+ * found. World spawn reports Y as 32767 when the spawn height is "wherever the
+ * ground happens to be", which is far outside the world and cannot be used.
+ */
+function resolveStandableY(dimension, location) {
+  const range = getBuildRangeForDimension(dimension.id);
+  const y = Math.floor(Number(location.y));
+  if (Number.isFinite(y) && y >= range.min && y <= range.max) return y;
+  try {
+    const topBlock = dimension.getTopmostBlock({ x: Math.floor(location.x), z: Math.floor(location.z) });
+    if (topBlock) return Math.min(range.max - 1, topBlock.location.y + 1);
+  } catch (e) {}
+  return null;
 }
 
 function validateBuildBounds(player, bounds) {
@@ -1511,7 +1617,7 @@ async function lightUpArea(player) {
           try {
             const block = dim.getBlock({ x: tx, y: ty, z: tz });
             const below = dim.getBlock({ x: tx, y: ty - 1, z: tz });
-            if (block && block.isAir && below && !below.isAir && below.typeId !== "minecraft:water" && below.typeId !== "minecraft:lava") {
+            if (block && block.isAir && below && !below.isAir && !LIQUID_BLOCKS.has(below.typeId)) {
               await dim.runCommandAsync(`setblock ${tx} ${ty} ${tz} minecraft:torch`);
               torchCount++;
               break;
@@ -1629,16 +1735,24 @@ function teleportToSpawn(player) {
 
     const spawnLoc = player.getSpawnPoint();
     if (spawnLoc) {
-      player.teleport({ x: spawnLoc.x + 0.5, y: spawnLoc.y, z: spawnLoc.z + 0.5 }, { dimension: spawnLoc.dimension });
-      player.sendMessage(`§b🚀 Teleported to spawn point (${spawnLoc.x}, ${spawnLoc.y}, ${spawnLoc.z})!§r`);
-      player.playSound("mob.endermen.portal", { volume: 0.9, pitch: 1.0 });
-      return;
+      const bedY = resolveStandableY(spawnLoc.dimension, spawnLoc);
+      if (bedY !== null) {
+        player.teleport({ x: Math.floor(spawnLoc.x) + 0.5, y: bedY, z: Math.floor(spawnLoc.z) + 0.5 }, { dimension: spawnLoc.dimension });
+        player.sendMessage(`§b🚀 Teleported to spawn point (${Math.floor(spawnLoc.x)}, ${bedY}, ${Math.floor(spawnLoc.z)})!§r`);
+        player.playSound("mob.endermen.portal", { volume: 0.9, pitch: 1.0 });
+        return;
+      }
     }
 
     const defSpawn = world.getDefaultSpawnLocation();
     const overworld = world.getDimension("overworld");
-    player.teleport({ x: defSpawn.x + 0.5, y: defSpawn.y, z: defSpawn.z + 0.5 }, { dimension: overworld });
-    player.sendMessage(`§b🚀 Teleported to world spawn (${defSpawn.x}, ${defSpawn.y}, ${defSpawn.z})!§r`);
+    const spawnY = resolveStandableY(overworld, defSpawn);
+    if (spawnY === null) {
+      player.sendMessage("§eCould not work out a safe height for the world spawn. Use 📍 Set Spawn Point Here to save your own travel point.§r");
+      return;
+    }
+    player.teleport({ x: Math.floor(defSpawn.x) + 0.5, y: spawnY, z: Math.floor(defSpawn.z) + 0.5 }, { dimension: overworld });
+    player.sendMessage(`§b🚀 Teleported to world spawn (${Math.floor(defSpawn.x)}, ${spawnY}, ${Math.floor(defSpawn.z)})!§r`);
     player.playSound("mob.endermen.portal", { volume: 0.9, pitch: 1.0 });
   } catch (err) {
     player.sendMessage(`§cCould not teleport to spawn: ${err}§r`);
@@ -1669,7 +1783,7 @@ function openTeleportPlayerMenu(player) {
       return;
     }
     const targetPlayer = otherPlayers[response.selection];
-    if (targetPlayer && targetPlayer.isValid()) {
+    if (isValidEntity(targetPlayer)) {
       player.teleport(targetPlayer.location, { dimension: targetPlayer.dimension });
       player.sendMessage(`§b🚀 Teleported to ${targetPlayer.name}!§r`);
       player.playSound("mob.endermen.portal", { volume: 0.9, pitch: 1.0 });
@@ -1723,8 +1837,10 @@ function locateDestination(player, locateType, option) {
   player.runCommandAsync(`locate ${locateType} ${option.id}`).then((result) => {
     const coordinates = parseLocateCoordinates(getLocateResultText(result));
     if (coordinates) return teleportToLocatedCoordinates(player, coordinates, option.name);
-    player.sendMessage("§a✔ Location found. Use the coordinates returned by Minecraft.§r");
-    player.sendMessage(`§7If none appeared, enter this in chat: /§flocate ${locateType} ${option.id}§r`);
+    player.sendMessage(`§a✔ Minecraft found a ${option.name} nearby!§r`);
+    player.sendMessage("§7Add-ons cannot read the coordinates back, so copy this command into chat to see them:§r");
+    player.sendMessage(`§f/locate ${locateType} ${option.id}§r`);
+    player.sendMessage("§7Then type those numbers into the box that opens next.§r");
     system.runTimeout(() => openLocatedCoordinatesForm(player, option.name), 20);
   }).catch((err) => player.sendMessage(`§cCould not find ${option.name}: ${err}§r`));
 }
@@ -1744,7 +1860,7 @@ function openLocatedCoordinatesForm(player, destinationName) {
     const numberPattern = /^-?\d+(?:\.\d+)?$/;
     if (!numberPattern.test(xText) || !numberPattern.test(zText) || (yText && !numberPattern.test(yText))) {
       player.sendMessage("§cEnter valid numbers for X and Z. Y can be left empty.§r");
-      return system.runTimeout(() => openLocatedCoordinatesForm(player, destinationName), 1);
+      return system.runTimeout(() => openLocatedCoordinatesForm(player, destinationName), 10);
     }
     teleportToLocatedCoordinates(player, {
       x: Number(xText), y: yText ? Number(yText) : undefined, z: Number(zText)
@@ -1809,7 +1925,7 @@ function openPetsMenu(player) {
         spawnHorseWithSaddle(player);
         break;
       case 4:
-        spawnPet(player, "iron_golem", "", "🦾 Iron Golem Guard summoned! He will protect you from monsters!");
+        spawnPet(player, "iron_golem", "minecraft:from_player", "🦾 Iron Golem Guard summoned! He will protect you from monsters!");
         break;
       case 5:
         spawnAxolotl(player);
@@ -1824,10 +1940,12 @@ function openPetsMenu(player) {
 function spawnPet(player, mobType, spawnEvent, message) {
   try {
     const entity = player.dimension.spawnEntity(`minecraft:${mobType}`, getCompanionSpawnLocation(player));
+    let tamed = false;
     const tameable = entity.getComponent("minecraft:tameable");
     if (tameable && typeof tameable.tame === "function") {
-      tameable.tame(player);
-    } else if (spawnEvent) {
+      try { tamed = tameable.tame(player) !== false; } catch (e) { tamed = false; }
+    }
+    if (!tamed && spawnEvent) {
       try { entity.triggerEvent(spawnEvent); } catch (e) {}
     }
     player.sendMessage(`§a${message}§r`);
@@ -1844,9 +1962,13 @@ function spawnHorseWithSaddle(player) {
     if (tameMount && typeof tameMount.tameToPlayer === "function") tameMount.tameToPlayer(true, player);
     else if (tameMount && typeof tameMount.tame === "function") tameMount.tame(true);
     let saddled = true;
-    try { horse.triggerEvent("minecraft:make_saddled"); } catch (e) { saddled = false; }
-    if (!saddled) giveSaddleFallback(player);
-    player.sendMessage("§a🐴 Tamed Horse with Saddle summoned! Jump on and ride away!§r");
+    try { horse.triggerEvent("minecraft:horse_saddled"); } catch (e) { saddled = false; }
+    if (saddled) {
+      player.sendMessage("§a🐴 Tamed Horse with Saddle summoned! Jump on and ride away!§r");
+    } else {
+      giveSaddleFallback(player);
+      player.sendMessage("§a🐴 Tamed Horse summoned! A saddle was added to your inventory - put it on the horse to ride.§r");
+    }
     player.playSound("random.levelup", { volume: 0.9, pitch: 1.4 });
   } catch (err) {
     player.sendMessage(`§cError summoning horse: ${err}§r`);

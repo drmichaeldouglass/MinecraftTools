@@ -22,7 +22,7 @@ A complete, feature-rich Minecraft Bedrock Add-On created to give players an eas
 * 🛡️ **Monster Begone!**: Clears all hostile monsters (Zombies, Creepers, Skeletons, Spiders, Phantoms, Endermen, Witches, Slimes, etc.) within a 35-block radius without harming friendly animals or pets.
 * ⬆️ **Escape to Surface (Cave Rescue)**: Scans upwards to locate open ground exposed to the sky and warps the player out of deep caves or ravines.
 * 🔥 **Lava & Fire Shield**: Puts out fire, nudges player up out of danger, and grants 2 minutes of Fire Resistance.
-* 🥛 **Cure All Effects**: Instantly clears negative potion effects like Poison, Wither, Slowness, or Blindness (like fresh milk).
+* 🥛 **Cure All Effects**: Instantly clears every potion effect — Poison, Wither, Slowness, and Blindness, plus any boosts you are carrying — exactly like drinking a bucket of milk.
 
 ---
 
@@ -54,8 +54,8 @@ A complete, feature-rich Minecraft Bedrock Add-On created to give players an eas
 * 📍 **Set Spawn Point Here**: Saves the player's current spot as their spawn point.
 * 🚀 **Teleport to Spawn Point**: Instantly warps back to the saved spawn point from anywhere in the world.
 * 👥 **Teleport to Another Player**: Lists online players (Dad, Mom, or friends) and teleports directly to them with one tap!
-* 🌎 **Find Nearest Biome**: Choose a biome available in the current dimension, locate it, then enter Minecraft's returned coordinates to teleport safely.
-* 🏰 **Find Nearest Structure**: Choose a village, trial chamber, fortress, End city, or another structure available in the current dimension, then use the returned coordinates to travel there.
+* 🌎 **Find Nearest Biome**: Choose a biome available in the current dimension and the add-on searches for it. Minecraft only prints `/locate` coordinates to chat, so the add-on shows you the exact command to paste, then opens a box where you type the numbers in to warp there safely.
+* 🏰 **Find Nearest Structure**: Same idea for villages, trial chambers, fortresses, End cities, and other structures available in the current dimension.
 
 ---
 
@@ -89,10 +89,9 @@ A complete, feature-rich Minecraft Bedrock Add-On created to give players an eas
 
 When creating a new world (or editing an existing world):
 
-1. **Experiments Setting**:
-   - Scroll down in the world settings menu to **Experiments**.
-   - Turn **ON** ➔ **Beta APIs** *(Required for Script API menus & 3D particle guides)*.
-   - Turn **ON** ➔ **Cheats** (so game mode and time commands can run).
+1. **World Settings**:
+   - Turn **ON** ➔ **Cheats** (so the game mode, time, and weather helpers can run).
+   - **Experiments are not needed.** Leave **Beta APIs** **OFF** — this add-on uses the stable Script API, which works without any experimental toggle.
 
 2. **Resource Packs**:
    - Go to **Resource Packs** ➔ **Available** / **Owned**.
@@ -113,4 +112,6 @@ When creating a new world (or editing an existing world):
    - **PC**: Right-click
    - **Touch / iPad / Phone**: Tap and hold the screen
    - **Controller (Xbox / Switch / PlayStation)**: Press Left Trigger (`LT` / `L2` / `ZL`)
-3. If you ever lose the device, type `!device` or `!wand` in chat!
+3. If you ever lose the device:
+   - Open any Helper Device you still have and tap **🎁 Get Extra Helper Device**, or
+   - Type `/scriptevent tools:device` in chat and a new one is added to your inventory.
