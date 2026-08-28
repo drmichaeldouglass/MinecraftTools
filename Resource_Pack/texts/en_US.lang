@@ -1,0 +1,4 @@
+pack.name=Helper Tools (Resource Pack)
+pack.description=Textures and assets for Helper Tools Add-On
+item.tools:helper_device=Helper Device
+item.tools:helper_device.name=Helper Device
