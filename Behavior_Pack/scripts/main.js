@@ -258,15 +258,28 @@ if (chatSendSignal) {
 /**
  * `world.beforeEvents.chatSend` only exists in the beta script API, so on the
  * stable module this pack targets the chat shortcuts above never fire.
- * `/scriptevent tools:device` is the fallback that always works.
+ * `/scriptevent tools:device` is the fallback that always works, and
+ * `/scriptevent tools:goto <X> <Z>` travels to coordinates read out of a
+ * `/locate` reply.
  */
+const DEVICE_SCRIPT_EVENTS = ["tools:device", "tools:wand", "tools:helper"];
+const TRAVEL_SCRIPT_EVENTS = ["tools:goto", "tools:travel", "tools:tp"];
+
 if (system.afterEvents && system.afterEvents.scriptEventReceive) {
   system.afterEvents.scriptEventReceive.subscribe((event) => {
-    if (!["tools:device", "tools:wand", "tools:helper"].includes(event.id)) return;
+    const isDeviceEvent = DEVICE_SCRIPT_EVENTS.includes(event.id);
+    const isTravelEvent = TRAVEL_SCRIPT_EVENTS.includes(event.id);
+    if (!isDeviceEvent && !isTravelEvent) return;
     const source = event.sourceEntity;
     if (!source) return;
-    const player = world.getAllPlayers().find((p) => p.id === source.id);
-    if (player) giveDeviceIfMissing(player, true);
+    const sourceId = source.id;
+    const message = event.message;
+    system.run(() => {
+      const player = world.getAllPlayers().find((p) => p.id === sourceId);
+      if (!player) return;
+      if (isDeviceEvent) giveDeviceIfMissing(player, true);
+      else handleTravelScriptEvent(player, message);
+    });
   }, { namespaces: ["tools"] });
 }
 
@@ -870,6 +883,10 @@ function getBuildRangeForDimension(dimensionId) {
 
 function getDimensionBuildRange(player) {
   return getBuildRangeForDimension(player.dimension.id);
+}
+
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 /**
@@ -1665,6 +1682,7 @@ function openSpawnAndTeleportMenu(player) {
     .button("👥 Teleport to Another Player\n§7Warp directly to Dad, Mom, or friends", "textures/items/name_tag")
     .button("🌎 Find Nearest Biome\n§7Choose a biome and travel to it", "textures/items/compass_item")
     .button("🏰 Find Nearest Structure\n§7Choose a structure and travel to it", "textures/items/map_filled")
+    .button("🚀 Travel to Found Coordinates\n§7Type in the X and Z that /locate gave you", "textures/items/paper")
     .button("⬅️ Back to Main Menu\n§7Return to categories", "textures/ui/arrow_left");
 
   form.show(player).then((response) => {
@@ -1686,6 +1704,9 @@ function openSpawnAndTeleportMenu(player) {
         openStructureTeleportMenu(player);
         break;
       case 5:
+        openFoundCoordinatesForm(player);
+        break;
+      case 6:
         openMainMenu(player);
         break;
     }
@@ -1795,6 +1816,33 @@ function getCurrentDimensionName(player) {
   return String(player.dimension.id).replace(/^minecraft:/, "");
 }
 
+/**
+ * Minecraft prints `/locate` results into the chat window only. The stable
+ * script API's CommandResult carries `successCount` and nothing else, so an
+ * add-on genuinely cannot read those coordinates back, and a form cannot be
+ * open while the player types in chat. So the flow is: pick a destination and
+ * get the exact search command, run it in chat, then hand the numbers back
+ * with `/scriptevent tools:goto <X> <Z>` or the coordinate form in the menu.
+ * Helper Tools takes it from there and lands the player on safe ground.
+ */
+const WORLD_EDGE = 29999900;
+
+// Tried in order when the exact column has no room to stand.
+const ARRIVAL_OFFSETS = [
+  { x: 0, z: 0 },
+  { x: 3, z: 0 }, { x: -3, z: 0 }, { x: 0, z: 3 }, { x: 0, z: -3 },
+  { x: 6, z: 6 }, { x: -6, z: 6 }, { x: 6, z: -6 }, { x: -6, z: -6 }
+];
+
+const LAVA_BLOCKS = new Set(["minecraft:lava", "minecraft:flowing_lava"]);
+
+// Chunk radius of the temporary ticking area, and how long to let it load.
+const TRAVEL_AREA_RADIUS = 2;
+const TRAVEL_LOAD_TICKS = 40;
+
+// The Nether's bedrock roof starts at Y 124, so surface searches begin below it.
+const NETHER_CEILING_SCAN_Y = 120;
+
 function openBiomeTeleportMenu(player) {
   openLocateSelectionMenu(player, "biome", BIOME_OPTIONS, "🌎 Nearest Biome");
 }
@@ -1807,90 +1855,266 @@ function openLocateSelectionMenu(player, locateType, allOptions, title) {
   const options = allOptions.filter((option) => option.dimensions.includes(getCurrentDimensionName(player)));
   const form = new ActionFormData()
     .title(title)
-    .body("Choose what Minecraft should find in your current dimension:");
+    .body("Pick a place. Helper Tools gives you the search command to send in chat, then warps you there safely.");
   for (const option of options) form.button(`${option.name}\n§7${option.id.replace("minecraft:", "")}`);
   form.button("⬅️ Back\n§7Return to Spawn & Teleport");
   form.show(player).then((response) => {
     if (response.canceled) return;
     if (response.selection === options.length) return openSpawnAndTeleportMenu(player);
     const option = options[response.selection];
-    if (option) locateDestination(player, locateType, option);
+    if (option) startLocateSearch(player, locateType, option);
   }).catch((e) => console.error(`${locateType} menu error: ${e}`));
 }
 
-function getLocateResultText(result) {
-  if (!result || typeof result !== "object") return "";
-  if (typeof result.statusMessage === "string") return result.statusMessage;
-  if (typeof result.message === "string") return result.message;
-  return "";
+/**
+ * Hands over the search instructions and closes down. No form is opened here
+ * on purpose: chat is unusable while a form is on screen, and the player needs
+ * chat to run the search.
+ */
+function startLocateSearch(player, locateType, option) {
+  player.setDynamicProperty("locate_target_name", option.name);
+  player.sendMessage(`§b§l🔎 Travel to the nearest ${option.name}§r`);
+  player.sendMessage(`§eStep 1.§r Send this in chat: §a/locate ${locateType} ${option.id}§r`);
+  player.sendMessage("§7Minecraft answers with something like §fThe nearest ... is at block 1256, (y?), -648§r");
+  player.sendMessage("§eStep 2.§r Send your two numbers back like this: §a/scriptevent tools:goto 1256 -648§r");
+  player.sendMessage("§7Rather tap than type? Hold the Helper Device and choose §f🚀 Travel to Found Coordinates§7.§r");
+  player.playSound("random.orb", { volume: 0.8, pitch: 1.4 });
 }
 
-function parseLocateCoordinates(message) {
-  if (!message) return null;
-  const match = message.match(/(-?\d+)\s*[, ]+\s*(~|-?\d+)\s*[, ]+\s*(-?\d+)/);
-  if (!match) return null;
-  return { x: Number(match[1]), y: match[2] === "~" ? undefined : Number(match[2]), z: Number(match[3]) };
+function getPendingDestinationName(player) {
+  const stored = player.getDynamicProperty("locate_target_name");
+  return typeof stored === "string" && stored.length > 0 ? stored : "your destination";
 }
 
-function locateDestination(player, locateType, option) {
-  player.sendMessage(`§e🔍 Searching for the nearest ${option.name}...§r`);
-  player.runCommandAsync(`locate ${locateType} ${option.id}`).then((result) => {
-    const coordinates = parseLocateCoordinates(getLocateResultText(result));
-    if (coordinates) return teleportToLocatedCoordinates(player, coordinates, option.name);
-    player.sendMessage(`§a✔ Minecraft found a ${option.name} nearby!§r`);
-    player.sendMessage("§7Add-ons cannot read the coordinates back, so copy this command into chat to see them:§r");
-    player.sendMessage(`§f/locate ${locateType} ${option.id}§r`);
-    player.sendMessage("§7Then type those numbers into the box that opens next.§r");
-    system.runTimeout(() => openLocatedCoordinatesForm(player, option.name), 20);
-  }).catch((err) => player.sendMessage(`§cCould not find ${option.name}: ${err}§r`));
+function extractNumbers(text) {
+  const matches = String(text === undefined || text === null ? "" : text).match(/-?\d+(?:\.\d+)?/g);
+  if (!matches) return [];
+  return matches.map(Number).filter((value) => Number.isFinite(value));
 }
 
-function openLocatedCoordinatesForm(player, destinationName) {
+/**
+ * Two numbers are X and Z (the shape `/locate` reports, where the height comes
+ * back as "(y?)"); three are X, Y and Z.
+ */
+function coordinatesFromNumbers(values) {
+  if (values.length === 2) return { x: values[0], z: values[1] };
+  if (values.length >= 3) return { x: values[0], y: values[1], z: values[2] };
+  return null;
+}
+
+function openFoundCoordinatesForm(player) {
+  const destinationName = getPendingDestinationName(player);
   const form = new ModalFormData()
-    .title("🚀 Teleport to Located Place")
-    .textField("X coordinate", "Example: 1250", "")
-    .textField("Y coordinate (optional)", "Use for caves or underground structures", "")
-    .textField("Z coordinate", "Example: -640", "");
+    .title("🚀 Travel to Found Coordinates")
+    .textField(`X from /locate (${destinationName})`, "Example: 1256", "")
+    .textField("Z from /locate", "Example: -648", "")
+    .textField("Y (optional)", "Leave empty to land on the surface", "")
+    .submitButton("🚀 Travel");
+
   form.show(player).then((response) => {
     if (response.canceled) return;
     const values = response.formValues || [];
-    const xText = String(values[0] ?? "").trim();
-    const yText = String(values[1] ?? "").trim();
-    const zText = String(values[2] ?? "").trim();
-    const numberPattern = /^-?\d+(?:\.\d+)?$/;
-    if (!numberPattern.test(xText) || !numberPattern.test(zText) || (yText && !numberPattern.test(yText))) {
-      player.sendMessage("§cEnter valid numbers for X and Z. Y can be left empty.§r");
-      return system.runTimeout(() => openLocatedCoordinatesForm(player, destinationName), 10);
+    const xText = String(values[0] === undefined ? "" : values[0]).trim();
+    const zText = String(values[1] === undefined ? "" : values[1]).trim();
+    const yText = String(values[2] === undefined ? "" : values[2]).trim();
+
+    const xNumbers = extractNumbers(xText);
+    const zNumbers = extractNumbers(zText);
+    const yNumbers = extractNumbers(yText);
+
+    let coordinates = null;
+    if (xNumbers.length >= 2) {
+      // Whole `/locate` reply pasted into the first box.
+      coordinates = coordinatesFromNumbers(xNumbers);
+    } else if (xNumbers.length === 1 && zNumbers.length === 1) {
+      coordinates = { x: xNumbers[0], z: zNumbers[0] };
+      // A Y box holding no number at all (blank, or the literal "(y?)" from
+      // the /locate reply) just means "put me on the surface".
+      if (yNumbers.length === 1) coordinates.y = yNumbers[0];
     }
-    teleportToLocatedCoordinates(player, {
-      x: Number(xText), y: yText ? Number(yText) : undefined, z: Number(zText)
-    }, destinationName);
-  }).catch((e) => console.error("Located coordinates form error: " + e));
+
+    if (!coordinates) {
+      player.sendMessage("§cType the X and Z numbers from /locate into the boxes. Y can stay empty.§r");
+      system.runTimeout(() => openFoundCoordinatesForm(player), 10);
+      return;
+    }
+    travelToFoundCoordinates(player, coordinates, destinationName);
+  }).catch((e) => console.error("Found coordinates form error: " + e));
 }
 
-function teleportToLocatedCoordinates(player, coordinates, destinationName) {
-  const x = Math.floor(coordinates.x);
-  const z = Math.floor(coordinates.z);
-  if (coordinates.y !== undefined) {
-    const range = getDimensionBuildRange(player);
-    const y = Math.max(range.min + 1, Math.min(range.max - 2, Math.floor(coordinates.y)));
-    try {
-      player.addEffect("resistance", 200, { amplifier: 4, showParticles: false });
-      player.addEffect("slow_falling", 400, { amplifier: 0, showParticles: false });
-      player.teleport({ x: x + 0.5, y: y + 1, z: z + 0.5 }, { dimension: player.dimension });
-      player.sendMessage(`§b🚀 Teleported to ${destinationName} at (${x}, ${y}, ${z})!§r`);
-      player.playSound("mob.endermen.portal", { volume: 0.9, pitch: 1.0 });
-    } catch (err) {
-      player.sendMessage(`§cCould not teleport: ${err}§r`);
-    }
+function handleTravelScriptEvent(player, message) {
+  const coordinates = coordinatesFromNumbers(extractNumbers(message));
+  if (!coordinates) {
+    player.sendMessage("§cUse §f/scriptevent tools:goto <X> <Z>§c — for example §f/scriptevent tools:goto 1256 -648§r");
     return;
   }
-  const dimensionName = getCurrentDimensionName(player);
-  const maxHeight = dimensionName === "nether" ? 120 : dimensionName === "the_end" ? 255 : 319;
-  player.runCommandAsync(`spreadplayers ${x} ${z} 0 1 @s ${maxHeight}`).then(() => {
-    player.sendMessage(`§b🚀 Teleported safely near ${destinationName} at X ${x}, Z ${z}!§r`);
+  travelToFoundCoordinates(player, coordinates, getPendingDestinationName(player));
+}
+
+function getTravelAreaName(player) {
+  return `ht_travel_${String(player.id).replace(/[^a-zA-Z0-9_]/g, "_")}`;
+}
+
+function removeTravelArea(dimension, areaName) {
+  return dimension.runCommandAsync(`tickingarea remove ${areaName}`).then(() => {}, () => {});
+}
+
+/**
+ * Loads the destination first so the landing spot can be worked out before the
+ * player moves. `getBlock` throws on unloaded chunks, which is exactly what a
+ * far-away `/locate` result is, so a temporary ticking area does the loading.
+ */
+function travelToFoundCoordinates(player, coordinates, destinationName) {
+  const range = getDimensionBuildRange(player);
+  const x = clampNumber(Math.floor(coordinates.x), -WORLD_EDGE, WORLD_EDGE);
+  const z = clampNumber(Math.floor(coordinates.z), -WORLD_EDGE, WORLD_EDGE);
+  const requestedY = coordinates.y !== undefined && Number.isFinite(coordinates.y)
+    ? clampNumber(Math.floor(coordinates.y), range.min + 1, range.max - 2)
+    : null;
+
+  const dimension = player.dimension;
+  const areaName = getTravelAreaName(player);
+  const areaY = requestedY !== null ? requestedY : Math.floor((range.min + range.max) / 2);
+
+  player.sendMessage(`§e🚀 Travelling to ${destinationName} at X ${x}, Z ${z}. Hold on...§r`);
+
+  removeTravelArea(dimension, areaName)
+    .then(() => dimension.runCommandAsync(`tickingarea add circle ${x} ${areaY} ${z} ${TRAVEL_AREA_RADIUS} ${areaName} true`))
+    .then(() => {
+      system.runTimeout(() => {
+        finishTravel(player, dimension, x, z, requestedY, destinationName, areaName);
+      }, TRAVEL_LOAD_TICKS);
+    })
+    .catch(() => {
+      // No ticking area available (cheats off, or the world is already at its
+      // ticking area limit). Drop in from above and settle once chunks load.
+      dropInTravel(player, dimension, x, z, requestedY, destinationName);
+    });
+}
+
+function finishTravel(player, dimension, x, z, requestedY, destinationName, areaName) {
+  if (!isValidEntity(player)) {
+    removeTravelArea(dimension, areaName);
+    return;
+  }
+  const spot = findArrivalSpot(dimension, x, z, requestedY);
+  if (!spot) {
+    removeTravelArea(dimension, areaName);
+    dropInTravel(player, dimension, x, z, requestedY, destinationName);
+    return;
+  }
+  try {
+    player.addEffect("resistance", 200, { amplifier: 4, showParticles: false });
+    player.addEffect("fire_resistance", 200, { amplifier: 0, showParticles: false });
+    player.teleport({ x: spot.x + 0.5, y: spot.y, z: spot.z + 0.5 }, { dimension: dimension });
+    player.sendMessage(`§b🚀 Arrived at ${destinationName}! You are at ${spot.x}, ${spot.y}, ${spot.z}.§r`);
+    if (spot.x !== x || spot.z !== z) {
+      player.sendMessage("§7(Nudged a few blocks across to the nearest safe ground.)§r");
+    }
     player.playSound("mob.endermen.portal", { volume: 0.9, pitch: 1.0 });
-  }).catch((err) => player.sendMessage(`§cCould not teleport safely: ${err}§r`));
+  } catch (err) {
+    player.sendMessage(`§cCould not land at those coordinates: ${err}§r`);
+  }
+  removeTravelArea(dimension, areaName);
+}
+
+/**
+ * Fallback path: teleporting also loads chunks, so arrive high up wrapped in
+ * slow falling and put both feet on the ground as soon as blocks can be read.
+ */
+function dropInTravel(player, dimension, x, z, requestedY, destinationName) {
+  const range = getBuildRangeForDimension(dimension.id);
+  const isNether = String(dimension.id).replace(/^minecraft:/, "") === "nether";
+  const anchorY = requestedY !== null
+    ? requestedY + 1
+    : (isNether ? NETHER_CEILING_SCAN_Y : range.max - 2);
+  try {
+    player.addEffect("resistance", 400, { amplifier: 4, showParticles: false });
+    player.addEffect("slow_falling", 600, { amplifier: 0, showParticles: false });
+    player.addEffect("fire_resistance", 400, { amplifier: 0, showParticles: false });
+    player.teleport({ x: x + 0.5, y: anchorY, z: z + 0.5 }, { dimension: dimension });
+    player.sendMessage(`§b🚀 Arrived above ${destinationName} at X ${x}, Z ${z}. Floating down safely!§r`);
+    player.playSound("mob.endermen.portal", { volume: 0.9, pitch: 1.0 });
+  } catch (err) {
+    player.sendMessage(`§cCould not travel to those coordinates: ${err}§r`);
+    return;
+  }
+  settleAfterDropIn(player, dimension, x, z, requestedY, 1);
+}
+
+function settleAfterDropIn(player, dimension, x, z, requestedY, attempt) {
+  system.runTimeout(() => {
+    if (!isValidEntity(player)) return;
+    const spot = findArrivalSpot(dimension, x, z, requestedY);
+    if (!spot) {
+      if (attempt < 5) settleAfterDropIn(player, dimension, x, z, requestedY, attempt + 1);
+      return;
+    }
+    try {
+      player.teleport({ x: spot.x + 0.5, y: spot.y, z: spot.z + 0.5 }, { dimension: dimension });
+      player.sendMessage(`§aLanded safely at ${spot.x}, ${spot.y}, ${spot.z}.§r`);
+    } catch (err) {
+      player.sendMessage(`§eYou arrived, but Helper Tools could not tidy up the landing: ${err}§r`);
+    }
+  }, 10);
+}
+
+function findArrivalSpot(dimension, x, z, requestedY) {
+  for (const offset of ARRIVAL_OFFSETS) {
+    const spot = findStandableColumn(dimension, x + offset.x, z + offset.z, requestedY);
+    if (spot) return spot;
+  }
+  // Solid rock all around the reported height: take the surface above it
+  // rather than leaving the player buried.
+  if (requestedY !== null) return findArrivalSpot(dimension, x, z, null);
+  return null;
+}
+
+/**
+ * Scans a column downwards for solid, non-lava footing with two air blocks
+ * above it. Returns null when the chunk is not loaded yet or the column has
+ * nowhere to stand.
+ */
+function findStandableColumn(dimension, x, z, requestedY) {
+  const range = getBuildRangeForDimension(dimension.id);
+  const isNether = String(dimension.id).replace(/^minecraft:/, "") === "nether";
+  let startY;
+  let lowestY;
+
+  if (requestedY !== null) {
+    // Underground destination: search around the reported height so the player
+    // lands inside the structure instead of on the surface far above it.
+    startY = Math.min(range.max - 2, requestedY + 4);
+    lowestY = Math.max(range.min + 1, requestedY - 24);
+  } else if (isNether) {
+    startY = NETHER_CEILING_SCAN_Y;
+    lowestY = range.min + 1;
+  } else {
+    try {
+      const topmost = dimension.getTopmostBlock({ x: x, z: z });
+      if (!topmost) return null;
+      startY = Math.min(range.max - 2, topmost.location.y + 1);
+    } catch (e) {
+      return null;
+    }
+    lowestY = range.min + 1;
+  }
+
+  for (let y = startY; y >= lowestY; y--) {
+    try {
+      const floor = dimension.getBlock({ x: x, y: y - 1, z: z });
+      const feet = dimension.getBlock({ x: x, y: y, z: z });
+      const head = dimension.getBlock({ x: x, y: y + 1, z: z });
+      if (!floor || !feet || !head) return null;
+      if (!feet.isAir || !head.isAir) continue;
+      // Water is fine to land on - the player just swims. Lava is not.
+      if (floor.isAir || LAVA_BLOCKS.has(floor.typeId)) continue;
+      return { x: x, y: y, z: z };
+    } catch (e) {
+      return null;
+    }
+  }
+  return null;
 }
 
 // ==========================================

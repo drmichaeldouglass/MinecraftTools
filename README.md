@@ -54,8 +54,24 @@ A complete, feature-rich Minecraft Bedrock Add-On created to give players an eas
 * 📍 **Set Spawn Point Here**: Saves the player's current spot as their spawn point.
 * 🚀 **Teleport to Spawn Point**: Instantly warps back to the saved spawn point from anywhere in the world.
 * 👥 **Teleport to Another Player**: Lists online players (Dad, Mom, or friends) and teleports directly to them with one tap!
-* 🌎 **Find Nearest Biome**: Choose a biome available in the current dimension and the add-on searches for it. Minecraft only prints `/locate` coordinates to chat, so the add-on shows you the exact command to paste, then opens a box where you type the numbers in to warp there safely.
-* 🏰 **Find Nearest Structure**: Same idea for villages, trial chambers, fortresses, End cities, and other structures available in the current dimension.
+* 🌎 **Find Nearest Biome**: Choose any biome that exists in the dimension you are standing in (Overworld, Nether, or The End).
+* 🏰 **Find Nearest Structure**: Same list idea for villages, trial chambers, fortresses, End cities, ancient cities, and more.
+* 🚀 **Travel to Found Coordinates**: The warp step for both of the above.
+
+#### How biome & structure travel works
+
+Minecraft prints `/locate` results into the chat window only — the add-on has no way to read those numbers back, and no menu can be on screen while you type in chat. So travelling takes two quick steps:
+
+1. Pick a biome or structure. Helper Tools closes the menu and prints the exact search command, for example `/locate structure minecraft:village`. Send that in chat.
+2. Minecraft answers with something like `The nearest village is at block 1256, (y?), -648`. Send those two numbers straight back:
+
+   ```
+   /scriptevent tools:goto 1256 -648
+   ```
+
+   Prefer tapping to typing? Hold the Helper Device, open **📍 Spawn & Teleport**, and choose **🚀 Travel to Found Coordinates** to type the numbers into a box instead. You can paste the whole `The nearest ...` line into the first box and it will pick the numbers out for you.
+
+Either way Helper Tools loads the destination first, finds solid ground with headroom (never lava, never the Nether's bedrock roof, and never buried inside rock), and puts you down there in one hop with Resistance and Fire Resistance for the landing.
 
 ---
 
