@@ -6,6 +6,44 @@ const ITEM_ID = "tools:helper_device";
 // Undo history storage: Map<playerId, UndoRecord>
 const undoHistory = new Map();
 
+const activeBuilds = new Set();
+const activeTravels = new Set();
+
+async function runExclusiveBuild(player, action) {
+  const id = player.id;
+  if (activeBuilds.has(id)) {
+    player.sendMessage("§ePlease wait for your current build or undo to finish.§r");
+    return;
+  }
+  activeBuilds.add(id);
+  try { return await action(); }
+  finally { activeBuilds.delete(id); }
+}
+
+function executeBuildPlan(player, ...args) {
+  return runExclusiveBuild(player, () => executeBuildPlanUnlocked(player, ...args));
+}
+
+function executeDigHole(player, ...args) {
+  return runExclusiveBuild(player, () => executeDigHoleUnlocked(player, ...args));
+}
+
+function executeFillBlocks(player, ...args) {
+  return runExclusiveBuild(player, () => executeFillBlocksUnlocked(player, ...args));
+}
+
+function executeLevelGround(player, ...args) {
+  return runExclusiveBuild(player, () => executeLevelGroundUnlocked(player, ...args));
+}
+
+function executePlatform(player, ...args) {
+  return runExclusiveBuild(player, () => executePlatformUnlocked(player, ...args));
+}
+
+function executeUndo(player, ...args) {
+  return runExclusiveBuild(player, () => executeUndoUnlocked(player, ...args));
+}
+
 // Active preview ticker storage: Map<playerId, intervalId>
 const activePreviews = new Map();
 
@@ -826,8 +864,8 @@ function calculateBounds(player, width, length, verticalSize, verticalDir = "up"
 
   let y1, y2;
   if (verticalDir === "down") {
-    y2 = py;
-    y1 = py - verticalSize + 1;
+    y2 = py - 1;
+    y1 = py - verticalSize;
   } else {
     y1 = py;
     y2 = py + verticalSize - 1;
@@ -1014,14 +1052,14 @@ async function runBuildCommands(dimension, commands) {
   for (const command of commands) await dimension.runCommandAsync(command);
 }
 
-function executeBuildPlan(player, plan, actionType, successMessage, sound = "dig.stone") {
+function executeBuildPlanUnlocked(player, plan, actionType, successMessage, sound = "dig.stone") {
   if (plan.dimensionId !== player.dimension.id) {
     player.sendMessage("§eYou changed dimensions after opening the preview. Open the builder again here.§r");
     return;
   }
   if (!validateBuildBounds(player, plan.bounds)) return;
   player.sendMessage(`§e🏗️ Building ${plan.name}...§r`);
-  captureUndoSnapshot(player, plan.bounds, actionType).then(async (record) => {
+  return captureUndoSnapshot(player, plan.bounds, actionType).then(async (record) => {
     await runBuildCommands(getDimensionById(record.dimensionId), plan.commands);
   }).then(() => {
     player.sendMessage(`§a${successMessage}§r`);
@@ -1061,7 +1099,7 @@ function openDigHoleMenu(player) {
   }).catch((e) => console.error("Dig menu error: " + e));
 }
 
-function executeDigHole(player, bounds, width, depth, length, hollow) {
+function executeDigHoleUnlocked(player, bounds, width, depth, length, hollow) {
   const digBounds = hollow ? getHollowHoleBounds(bounds) : bounds;
   if (!digBounds) {
     player.sendMessage("§eA hollow hole needs width and length of at least 3 blocks, and depth of at least 2 blocks.§r");
@@ -1070,7 +1108,7 @@ function executeDigHole(player, bounds, width, depth, length, hollow) {
   if (!validateBuildBounds(player, digBounds)) return;
   const cmd = `fill ${digBounds.x1} ${digBounds.y1} ${digBounds.z1} ${digBounds.x2} ${digBounds.y2} ${digBounds.z2} minecraft:air`;
 
-  captureUndoSnapshot(player, digBounds, "hole").then((record) => {
+  return captureUndoSnapshot(player, digBounds, "hole").then((record) => {
     return getDimensionById(record.dimensionId).runCommandAsync(cmd);
   }).then(() => {
     player.sendMessage(`§a🕳️ Hole created! (${width} wide, ${depth} deep, ${length} forward)§r`);
@@ -1128,11 +1166,11 @@ function openFillBlocksMenu(player) {
   }).catch((e) => console.error("Fill menu error: " + e));
 }
 
-function executeFillBlocks(player, bounds, blockId, width, height, length, style) {
+function executeFillBlocksUnlocked(player, bounds, blockId, width, height, length, style) {
   if (!validateBuildBounds(player, bounds)) return;
   const cmd = `fill ${bounds.x1} ${bounds.y1} ${bounds.z1} ${bounds.x2} ${bounds.y2} ${bounds.z2} ${blockId} ${style}`;
 
-  captureUndoSnapshot(player, bounds, "fill").then((record) => {
+  return captureUndoSnapshot(player, bounds, "fill").then((record) => {
     return getDimensionById(record.dimensionId).runCommandAsync(cmd);
   }).then(() => {
     player.sendMessage(`§a🧱 Blocks placed! (${width}x${height}x${length} of ${blockId})§r`);
@@ -1189,12 +1227,12 @@ function openLevelGroundMenu(player) {
   }).catch((e) => console.error("Level menu error: " + e));
 }
 
-function executeLevelGround(player, bounds, radius, floorBlock) {
+function executeLevelGroundUnlocked(player, bounds, radius, floorBlock) {
   const clearCmd = `fill ${bounds.x1} ${bounds.y1 + 1} ${bounds.z1} ${bounds.x2} ${bounds.y2} ${bounds.z2} minecraft:air`;
   const floorCmd = `fill ${bounds.x1} ${bounds.y1} ${bounds.z1} ${bounds.x2} ${bounds.y1} ${bounds.z2} ${floorBlock}`;
 
   if (!validateBuildBounds(player, bounds)) return;
-  captureUndoSnapshot(player, bounds, "level").then((record) => {
+  return captureUndoSnapshot(player, bounds, "level").then((record) => {
     const dimension = getDimensionById(record.dimensionId);
     return dimension.runCommandAsync(clearCmd).then(() => dimension.runCommandAsync(floorCmd));
   }).then(() => {
@@ -1250,10 +1288,10 @@ function openPlatformMenu(player) {
   }).catch((e) => console.error("Platform menu error: " + e));
 }
 
-function executePlatform(player, bounds, size, blockId) {
+function executePlatformUnlocked(player, bounds, size, blockId) {
   if (!validateBuildBounds(player, bounds)) return;
   const cmd = `fill ${bounds.x1} ${bounds.y1} ${bounds.z1} ${bounds.x2} ${bounds.y2} ${bounds.z2} ${blockId}`;
-  captureUndoSnapshot(player, bounds, "platform").then((record) => {
+  return captureUndoSnapshot(player, bounds, "platform").then((record) => {
     return getDimensionById(record.dimensionId).runCommandAsync(cmd);
   }).then(() => {
     player.sendMessage(`§a🪜 ${size}x${size} Platform created under your feet!§r`);
@@ -1650,7 +1688,7 @@ async function lightUpArea(player) {
   }
 }
 
-function executeUndo(player) {
+function executeUndoUnlocked(player) {
   const lastAction = undoHistory.get(player.id);
   if (!lastAction || !lastAction.structureName || !lastAction.bounds || !lastAction.dimensionId) {
     player.sendMessage("§e[Helper Tools] Nothing to undo!§r");
@@ -1659,9 +1697,9 @@ function executeUndo(player) {
 
   const undoDimension = getDimensionById(lastAction.dimensionId);
   const loadCmd = `structure load ${lastAction.structureName} ${lastAction.bounds.x1} ${lastAction.bounds.y1} ${lastAction.bounds.z1}`;
-  undoDimension.runCommandAsync(loadCmd).then(() => {
+  return undoDimension.runCommandAsync(loadCmd).then(async () => {
     undoHistory.delete(player.id);
-    undoDimension.runCommandAsync(`structure delete ${lastAction.structureName}`).catch(() => {});
+    await undoDimension.runCommandAsync(`structure delete ${lastAction.structureName}`).catch(() => {});
     player.sendMessage("§a↩️ Undid your last build action!§r");
     player.playSound("random.pop", { volume: 1.0, pitch: 1.0 });
   }).catch((err) => {
@@ -1898,7 +1936,24 @@ function extractNumbers(text) {
  */
 function coordinatesFromNumbers(values) {
   if (values.length === 2) return { x: values[0], z: values[1] };
-  if (values.length >= 3) return { x: values[0], y: values[1], z: values[2] };
+  if (values.length === 3) return { x: values[0], y: values[1], z: values[2] };
+  return null;
+}
+
+// Parse the coordinate tuple before any trailing distance in a /locate reply.
+function parseTravelCoordinates(text) {
+  const input = String(text ?? "").trim();
+  if (/^[\d+.,\s-]+$/.test(input)) {
+    const tokens = input.split(/[\s,]+/);
+    if (!tokens.every((token) => /^[+-]?\d+(?:\.\d+)?$/.test(token))) return null;
+    return coordinatesFromNumbers(tokens.map(Number));
+  }
+  const tuple = input.match(/(-?\d+(?:\.\d+)?)\s*,\s*(?:\(\s*y\s*\?\s*\)|~|\?|(-?\d+(?:\.\d+)?))\s*,\s*(-?\d+(?:\.\d+)?)/i);
+  if (tuple) {
+    const result = { x: Number(tuple[1]), z: Number(tuple[3]) };
+    if (tuple[2] !== undefined) result.y = Number(tuple[2]);
+    return result;
+  }
   return null;
 }
 
@@ -1925,7 +1980,7 @@ function openFoundCoordinatesForm(player) {
     let coordinates = null;
     if (xNumbers.length >= 2) {
       // Whole `/locate` reply pasted into the first box.
-      coordinates = coordinatesFromNumbers(xNumbers);
+      coordinates = parseTravelCoordinates(xText);
     } else if (xNumbers.length === 1 && zNumbers.length === 1) {
       coordinates = { x: xNumbers[0], z: zNumbers[0] };
       // A Y box holding no number at all (blank, or the literal "(y?)" from
@@ -1943,7 +1998,7 @@ function openFoundCoordinatesForm(player) {
 }
 
 function handleTravelScriptEvent(player, message) {
-  const coordinates = coordinatesFromNumbers(extractNumbers(message));
+  const coordinates = parseTravelCoordinates(message);
   if (!coordinates) {
     player.sendMessage("§cUse §f/scriptevent tools:goto <X> <Z>§c — for example §f/scriptevent tools:goto 1256 -648§r");
     return;
@@ -1964,99 +2019,54 @@ function removeTravelArea(dimension, areaName) {
  * player moves. `getBlock` throws on unloaded chunks, which is exactly what a
  * far-away `/locate` result is, so a temporary ticking area does the loading.
  */
-function travelToFoundCoordinates(player, coordinates, destinationName) {
-  const range = getDimensionBuildRange(player);
+async function travelToFoundCoordinates(player, coordinates, destinationName) {
+  const id = player.id;
+  if (activeTravels.has(id)) {
+    player.sendMessage("§ePlease wait for your current trip to finish.§r");
+    return;
+  }
+  if (!Number.isFinite(coordinates.x) || !Number.isFinite(coordinates.z)) {
+    player.sendMessage("§cPlease enter finite X and Z coordinates.§r");
+    return;
+  }
+  activeTravels.add(id);
+  const dimension = player.dimension;
+  const range = getBuildRangeForDimension(dimension.id);
   const x = clampNumber(Math.floor(coordinates.x), -WORLD_EDGE, WORLD_EDGE);
   const z = clampNumber(Math.floor(coordinates.z), -WORLD_EDGE, WORLD_EDGE);
-  const requestedY = coordinates.y !== undefined && Number.isFinite(coordinates.y)
-    ? clampNumber(Math.floor(coordinates.y), range.min + 1, range.max - 2)
-    : null;
-
-  const dimension = player.dimension;
+  const requestedY = Number.isFinite(coordinates.y)
+    ? clampNumber(Math.floor(coordinates.y), range.min + 1, range.max - 2) : null;
   const areaName = getTravelAreaName(player);
-  const areaY = requestedY !== null ? requestedY : Math.floor((range.min + range.max) / 2);
-
-  player.sendMessage(`§e🚀 Travelling to ${destinationName} at X ${x}, Z ${z}. Hold on...§r`);
-
-  removeTravelArea(dimension, areaName)
-    .then(() => dimension.runCommandAsync(`tickingarea add circle ${x} ${areaY} ${z} ${TRAVEL_AREA_RADIUS} ${areaName} true`))
-    .then(() => {
-      system.runTimeout(() => {
-        finishTravel(player, dimension, x, z, requestedY, destinationName, areaName);
-      }, TRAVEL_LOAD_TICKS);
-    })
-    .catch(() => {
-      // No ticking area available (cheats off, or the world is already at its
-      // ticking area limit). Drop in from above and settle once chunks load.
-      dropInTravel(player, dimension, x, z, requestedY, destinationName);
-    });
-}
-
-function finishTravel(player, dimension, x, z, requestedY, destinationName, areaName) {
-  if (!isValidEntity(player)) {
-    removeTravelArea(dimension, areaName);
-    return;
-  }
-  const spot = findArrivalSpot(dimension, x, z, requestedY);
-  if (!spot) {
-    removeTravelArea(dimension, areaName);
-    dropInTravel(player, dimension, x, z, requestedY, destinationName);
-    return;
-  }
+  let areaCreated = false;
   try {
-    player.addEffect("resistance", 200, { amplifier: 4, showParticles: false });
-    player.addEffect("fire_resistance", 200, { amplifier: 0, showParticles: false });
-    player.teleport({ x: spot.x + 0.5, y: spot.y, z: spot.z + 0.5 }, { dimension: dimension });
-    player.sendMessage(`§b🚀 Arrived at ${destinationName}! You are at ${spot.x}, ${spot.y}, ${spot.z}.§r`);
-    if (spot.x !== x || spot.z !== z) {
-      player.sendMessage("§7(Nudged a few blocks across to the nearest safe ground.)§r");
-    }
-    player.playSound("mob.endermen.portal", { volume: 0.9, pitch: 1.0 });
-  } catch (err) {
-    player.sendMessage(`§cCould not land at those coordinates: ${err}§r`);
-  }
-  removeTravelArea(dimension, areaName);
-}
-
-/**
- * Fallback path: teleporting also loads chunks, so arrive high up wrapped in
- * slow falling and put both feet on the ground as soon as blocks can be read.
- */
-function dropInTravel(player, dimension, x, z, requestedY, destinationName) {
-  const range = getBuildRangeForDimension(dimension.id);
-  const isNether = String(dimension.id).replace(/^minecraft:/, "") === "nether";
-  const anchorY = requestedY !== null
-    ? requestedY + 1
-    : (isNether ? NETHER_CEILING_SCAN_Y : range.max - 2);
-  try {
-    player.addEffect("resistance", 400, { amplifier: 4, showParticles: false });
-    player.addEffect("slow_falling", 600, { amplifier: 0, showParticles: false });
-    player.addEffect("fire_resistance", 400, { amplifier: 0, showParticles: false });
-    player.teleport({ x: x + 0.5, y: anchorY, z: z + 0.5 }, { dimension: dimension });
-    player.sendMessage(`§b🚀 Arrived above ${destinationName} at X ${x}, Z ${z}. Floating down safely!§r`);
-    player.playSound("mob.endermen.portal", { volume: 0.9, pitch: 1.0 });
-  } catch (err) {
-    player.sendMessage(`§cCould not travel to those coordinates: ${err}§r`);
-    return;
-  }
-  settleAfterDropIn(player, dimension, x, z, requestedY, 1);
-}
-
-function settleAfterDropIn(player, dimension, x, z, requestedY, attempt) {
-  system.runTimeout(() => {
-    if (!isValidEntity(player)) return;
-    const spot = findArrivalSpot(dimension, x, z, requestedY);
+    player.sendMessage(`§e🚀 Checking safe ground at X ${x}, Z ${z}. Hold on...§r`);
+    let spot = findArrivalSpot(dimension, x, z, requestedY);
     if (!spot) {
-      if (attempt < 5) settleAfterDropIn(player, dimension, x, z, requestedY, attempt + 1);
+      const areaY = requestedY ?? Math.floor((range.min + range.max) / 2);
+      await dimension.runCommandAsync(`tickingarea add circle ${x} ${areaY} ${z} ${TRAVEL_AREA_RADIUS} ${areaName} true`);
+      areaCreated = true;
+      for (let attempt = 0; attempt < 5 && !spot; attempt++) {
+        await new Promise((resolve) => system.runTimeout(resolve, TRAVEL_LOAD_TICKS));
+        if (!isValidEntity(player) || player.dimension.id !== dimension.id) return;
+        spot = findArrivalSpot(dimension, x, z, requestedY);
+      }
+    }
+    if (!isValidEntity(player) || player.dimension.id !== dimension.id) return;
+    if (!spot) {
+      player.sendMessage("§eNo safe landing was found. You stayed where you were; try nearby coordinates.§r");
       return;
     }
-    try {
-      player.teleport({ x: spot.x + 0.5, y: spot.y, z: spot.z + 0.5 }, { dimension: dimension });
-      player.sendMessage(`§aLanded safely at ${spot.x}, ${spot.y}, ${spot.z}.§r`);
-    } catch (err) {
-      player.sendMessage(`§eYou arrived, but Helper Tools could not tidy up the landing: ${err}§r`);
-    }
-  }, 10);
+    player.addEffect("resistance", 200, { amplifier: 4, showParticles: false });
+    player.addEffect("fire_resistance", 200, { amplifier: 0, showParticles: false });
+    player.teleport({ x: spot.x + 0.5, y: spot.y, z: spot.z + 0.5 }, { dimension });
+    player.sendMessage(`§b🚀 Arrived at ${destinationName}! You are at ${spot.x}, ${spot.y}, ${spot.z}.§r`);
+    player.playSound("mob.endermen.portal", { volume: 0.9, pitch: 1.0 });
+  } catch (err) {
+    if (isValidEntity(player)) player.sendMessage(`§cCould not complete travel: ${err}. No unchecked landing will be attempted.§r`);
+  } finally {
+    if (areaCreated) await removeTravelArea(dimension, areaName);
+    activeTravels.delete(id);
+  }
 }
 
 function findArrivalSpot(dimension, x, z, requestedY) {
@@ -2091,9 +2101,13 @@ function findStandableColumn(dimension, x, z, requestedY) {
     lowestY = range.min + 1;
   } else {
     try {
-      const topmost = dimension.getTopmostBlock({ x: x, z: z });
-      if (!topmost) return null;
-      startY = Math.min(range.max - 2, topmost.location.y + 1);
+      if (typeof dimension.getTopmostBlock === "function") {
+        const topmost = dimension.getTopmostBlock({ x: x, z: z });
+        if (!topmost) return null;
+        startY = Math.min(range.max - 1, topmost.location.y + 1);
+      } else {
+        startY = range.max - 1;
+      }
     } catch (e) {
       return null;
     }
