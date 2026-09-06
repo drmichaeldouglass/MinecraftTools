@@ -131,3 +131,14 @@ When creating a new world (or editing an existing world):
 3. If you ever lose the device:
    - Open any Helper Device you still have and tap **🎁 Get Extra Helper Device**, or
    - Type `/scriptevent tools:device` in chat and a new one is added to your inventory.
+
+## Version 1.1.1 fixes and verification
+
+- The Helper Device now has an always-usable activation component, including at full hunger.
+- Dig depth counts blocks below the player's feet, so a one-block hole removes one ground layer.
+- Pasted `/locate` replies preserve X/Z when the reply includes an unknown Y and a trailing distance.
+- Coordinate travel checks the landing before moving. If loading fails or no landing is found, the player stays in place. Changing dimensions cancels a pending trip.
+- A player can run only one build or undo at a time, protecting the undo snapshot from overlapping operations.
+- Landing searches also work on API versions without `getTopmostBlock`.
+
+Run `node --test tests/regression.cjs` for the mocked Script API regression tests, and `bash build.sh` to rebuild all three installers. These tests do not replace Minecraft testing. Check device activation at full hunger in Creative and Survival on touch and desktop, one-block digging and undo, base building and undo, and travel to loaded terrain, unloaded terrain, Nether caves, and End void in a test world.
