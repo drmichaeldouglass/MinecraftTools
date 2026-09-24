@@ -145,9 +145,9 @@ const BIOME_OPTIONS = [
   { name: "Cherry Grove 🌸", id: "minecraft:cherry_grove", dimensions: ["overworld"] },
   { name: "Meadow 🌼", id: "minecraft:meadow", dimensions: ["overworld"] },
   { name: "Jagged Peaks ⛰️", id: "minecraft:jagged_peaks", dimensions: ["overworld"] },
-  { name: "Lush Caves 🌺", id: "minecraft:lush_caves", dimensions: ["overworld"] },
-  { name: "Dripstone Caves 🪨", id: "minecraft:dripstone_caves", dimensions: ["overworld"] },
-  { name: "Deep Dark 💀", id: "minecraft:deep_dark", dimensions: ["overworld"] },
+  { name: "Lush Caves 🌺", id: "minecraft:lush_caves", dimensions: ["overworld"], underground: true },
+  { name: "Dripstone Caves 🪨", id: "minecraft:dripstone_caves", dimensions: ["overworld"], underground: true },
+  { name: "Deep Dark 💀", id: "minecraft:deep_dark", dimensions: ["overworld"], underground: true },
   { name: "Nether Wastes 🔥", id: "minecraft:hell", dimensions: ["nether"] },
   { name: "Soul Sand Valley 👻", id: "minecraft:soulsand_valley", dimensions: ["nether"] },
   { name: "Crimson Forest 🍄", id: "minecraft:crimson_forest", dimensions: ["nether"] },
@@ -210,6 +210,19 @@ function isValidEntity(entity) {
     return typeof valid === "function" ? entity.isValid() : valid !== false;
   } catch (e) {
     return false;
+  }
+}
+
+/**
+ * Script API 2.x replaced `runCommandAsync` with a synchronous `runCommand`
+ * that throws when a command fails. Returning a promise keeps every
+ * `.then`/`.catch`/`await` chain behaving the way it did before.
+ */
+function runCommand(source, command) {
+  try {
+    return Promise.resolve(source.runCommand(command));
+  } catch (err) {
+    return Promise.reject(err);
   }
 }
 
@@ -297,8 +310,7 @@ if (chatSendSignal) {
  * `world.beforeEvents.chatSend` only exists in the beta script API, so on the
  * stable module this pack targets the chat shortcuts above never fire.
  * `/scriptevent tools:device` is the fallback that always works, and
- * `/scriptevent tools:goto <X> <Z>` travels to coordinates read out of a
- * `/locate` reply.
+ * `/scriptevent tools:goto <X> [Y] <Z>` teleports to typed-in coordinates.
  */
 const DEVICE_SCRIPT_EVENTS = ["tools:device", "tools:wand", "tools:helper"];
 const TRAVEL_SCRIPT_EVENTS = ["tools:goto", "tools:travel", "tools:tp"];
@@ -316,7 +328,7 @@ if (system.afterEvents && system.afterEvents.scriptEventReceive) {
       const player = world.getAllPlayers().find((p) => p.id === sourceId);
       if (!player) return;
       if (isDeviceEvent) giveDeviceIfMissing(player, true);
-      else handleTravelScriptEvent(player, message);
+      else handleTeleportScriptEvent(player, message);
     });
   }, { namespaces: ["tools"] });
 }
@@ -438,35 +450,35 @@ function openGameModeMenu(player) {
 }
 
 function setDaytime(player) {
-  player.dimension.runCommandAsync("time set day").then(() => {
+  runCommand(player.dimension, "time set day").then(() => {
     player.sendMessage("§e☀️ Time set to Daytime! Enjoy the sunshine!§r");
     player.playSound("random.orb", { volume: 0.8, pitch: 1.2 });
   }).catch((err) => player.sendMessage(`§cError: ${err}§r`));
 }
 
 function setNighttime(player) {
-  player.dimension.runCommandAsync("time set night").then(() => {
+  runCommand(player.dimension, "time set night").then(() => {
     player.sendMessage("§b🌙 Time set to Nighttime! Look at the stars!§r");
     player.playSound("random.orb", { volume: 0.8, pitch: 0.8 });
   }).catch((err) => player.sendMessage(`§cError: ${err}§r`));
 }
 
 function clearWeather(player) {
-  player.dimension.runCommandAsync("weather clear").then(() => {
+  runCommand(player.dimension, "weather clear").then(() => {
     player.sendMessage("§b🌤️ Weather cleared! The skies are bright and blue!§r");
     player.playSound("random.levelup", { volume: 0.7, pitch: 1.4 });
   }).catch((err) => player.sendMessage(`§cError: ${err}§r`));
 }
 
 function setCreative(player) {
-  player.runCommandAsync("gamemode creative @s").then(() => {
+  runCommand(player, "gamemode creative @s").then(() => {
     player.sendMessage("§a🎨 Switched to Creative Mode! Fly and build anything!§r");
     player.playSound("random.levelup", { volume: 0.8, pitch: 1.5 });
   }).catch((err) => player.sendMessage(`§cError changing gamemode: ${err}§r`));
 }
 
 function setSurvival(player) {
-  player.runCommandAsync("gamemode survival @s").then(() => {
+  runCommand(player, "gamemode survival @s").then(() => {
     player.sendMessage("§c⚔️ Switched to Survival Mode! Have fun!§r");
     player.playSound("random.levelup", { volume: 0.8, pitch: 1.0 });
   }).catch((err) => player.sendMessage(`§cError changing gamemode: ${err}§r`));
@@ -513,8 +525,8 @@ function openLifeSaversMenu(player) {
 }
 
 function healAndFeed(player) {
-  player.runCommandAsync("effect @s instant_health 1 255 true").then(() => {
-    return player.runCommandAsync("effect @s saturation 1 255 true");
+  runCommand(player, "effect @s instant_health 1 255 true").then(() => {
+    return runCommand(player, "effect @s saturation 1 255 true");
   }).then(() => {
     player.sendMessage("§a❤️ Full health and hunger restored! You're good to go!§r");
     player.playSound("random.levelup", { volume: 0.9, pitch: 1.4 });
@@ -613,8 +625,8 @@ function lavaRescue(player) {
     const safeSpot = findSafeSpotAbove(player);
     if (safeSpot) player.teleport(safeSpot);
     Promise.all([
-      player.runCommandAsync("effect @s fire_resistance 120 1 true"),
-      player.runCommandAsync("effect @s instant_health 1 255 true")
+      runCommand(player, "effect @s fire_resistance 120 1 true"),
+      runCommand(player, "effect @s instant_health 1 255 true")
     ]).then(() => {
       player.sendMessage("§6🔥 Fire Shield Activated! Fire extinguished & 2 minutes of Fire Resistance granted!§r");
       if (!safeSpot) player.sendMessage("§eNo open ground was found above you, so you stayed put. Use ⬆️ Escape to Surface to get out.§r");
@@ -626,7 +638,7 @@ function lavaRescue(player) {
 }
 
 function cureAllEffects(player) {
-  player.runCommandAsync("effect @s clear").then(() => {
+  runCommand(player, "effect @s clear").then(() => {
     player.sendMessage("§f🥛 All potion effects cured (just like a fresh bucket of milk)!§r");
     player.playSound("random.drink", { volume: 0.9, pitch: 1.0 });
   }).catch((err) => player.sendMessage(`§cError: ${err}§r`));
@@ -649,14 +661,14 @@ function openSuperpowersMenu(player) {
     if (response.canceled) return;
     switch (response.selection) {
       case 0:
-        player.runCommandAsync("effect @s night_vision 900 0 true").then(() => {
+        runCommand(player, "effect @s night_vision 900 0 true").then(() => {
           player.sendMessage("§b👀 Night Vision activated for 15 minutes! Dark places are fully lit!§r");
           player.playSound("random.orb", { volume: 0.9, pitch: 1.5 });
         }).catch((err) => player.sendMessage(`§cCould not apply Night Vision: ${err}§r`));
         break;
       case 1:
-        player.runCommandAsync("effect @s speed 300 1 true").then(() => {
-          return player.runCommandAsync("effect @s jump_boost 300 1 true");
+        runCommand(player, "effect @s speed 300 1 true").then(() => {
+          return runCommand(player, "effect @s jump_boost 300 1 true");
         }).then(() => {
           player.sendMessage("§e⚡ Super Speed & High Jump active for 5 minutes! Zoom around!§r");
           player.playSound("random.levelup", { volume: 0.9, pitch: 1.8 });
@@ -978,7 +990,7 @@ async function captureUndoSnapshot(player, bounds, type) {
   const structureName = getUndoStructureName(player);
   const command = `structure save ${structureName} ${bounds.x1} ${bounds.y1} ${bounds.z1} ${bounds.x2} ${bounds.y2} ${bounds.z2} false memory true`;
   const record = { type, bounds, structureName, dimensionId: player.dimension.id };
-  await player.dimension.runCommandAsync(command);
+  await runCommand(player.dimension, command);
   undoHistory.set(player.id, record);
   return record;
 }
@@ -1049,7 +1061,7 @@ function pushShellCommands(commands, context, x1, y1, z1, x2, y2, z2, blockId) {
 }
 
 async function runBuildCommands(dimension, commands) {
-  for (const command of commands) await dimension.runCommandAsync(command);
+  for (const command of commands) await runCommand(dimension, command);
 }
 
 function executeBuildPlanUnlocked(player, plan, actionType, successMessage, sound = "dig.stone") {
@@ -1073,11 +1085,11 @@ function executeBuildPlanUnlocked(player, plan, actionType, successMessage, soun
 function openDigHoleMenu(player) {
   const form = new ModalFormData()
     .title("🕳️ Dig an Empty Hole")
-    .slider("Width (Blocks Wide):", 1, 25, 1, 3)
-    .slider("Depth (Blocks Deep into Ground):", 1, 25, 1, 3)
-    .slider("Length (Blocks Forward):", 1, 25, 1, 5)
-    .toggle("Hollow Hole (keeps outer shell)", false)
-    .toggle("✨ Show 3D Glowing Preview Guide First", true);
+    .slider("Width (Blocks Wide):", 1, 25, { valueStep: 1, defaultValue: 3 })
+    .slider("Depth (Blocks Deep into Ground):", 1, 25, { valueStep: 1, defaultValue: 3 })
+    .slider("Length (Blocks Forward):", 1, 25, { valueStep: 1, defaultValue: 5 })
+    .toggle("Hollow Hole (keeps outer shell)", { defaultValue: false })
+    .toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
 
   form.show(player).then((response) => {
     if (response.canceled) return;
@@ -1109,7 +1121,7 @@ function executeDigHoleUnlocked(player, bounds, width, depth, length, hollow) {
   const cmd = `fill ${digBounds.x1} ${digBounds.y1} ${digBounds.z1} ${digBounds.x2} ${digBounds.y2} ${digBounds.z2} minecraft:air`;
 
   return captureUndoSnapshot(player, digBounds, "hole").then((record) => {
-    return getDimensionById(record.dimensionId).runCommandAsync(cmd);
+    return runCommand(getDimensionById(record.dimensionId), cmd);
   }).then(() => {
     player.sendMessage(`§a🕳️ Hole created! (${width} wide, ${depth} deep, ${length} forward)§r`);
     player.playSound("dig.stone", { volume: 1.0, pitch: 0.8 });
@@ -1124,13 +1136,13 @@ function openFillBlocksMenu(player) {
 
   const form = new ModalFormData()
     .title("🧱 Build / Fill Blocks")
-    .dropdown("Choose Block Type:", blockNames, 0)
-    .textField("Or Custom Block ID (e.g. quartz_block):", "leave blank if choosing from list", "")
-    .slider("Width (Blocks Wide):", 1, 25, 1, 3)
-    .slider("Height (Blocks High):", 1, 25, 1, 3)
-    .slider("Length (Blocks Forward):", 1, 25, 1, 5)
-    .dropdown("Structure Style:", fillStyles, 0)
-    .toggle("✨ Show 3D Glowing Preview Guide First", true);
+    .dropdown("Choose Block Type:", blockNames, { defaultValueIndex: 0 })
+    .textField("Or Custom Block ID (e.g. quartz_block):", "leave blank if choosing from list")
+    .slider("Width (Blocks Wide):", 1, 25, { valueStep: 1, defaultValue: 3 })
+    .slider("Height (Blocks High):", 1, 25, { valueStep: 1, defaultValue: 3 })
+    .slider("Length (Blocks Forward):", 1, 25, { valueStep: 1, defaultValue: 5 })
+    .dropdown("Structure Style:", fillStyles, { defaultValueIndex: 0 })
+    .toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
 
   form.show(player).then((response) => {
     if (response.canceled) return;
@@ -1171,7 +1183,7 @@ function executeFillBlocksUnlocked(player, bounds, blockId, width, height, lengt
   const cmd = `fill ${bounds.x1} ${bounds.y1} ${bounds.z1} ${bounds.x2} ${bounds.y2} ${bounds.z2} ${blockId} ${style}`;
 
   return captureUndoSnapshot(player, bounds, "fill").then((record) => {
-    return getDimensionById(record.dimensionId).runCommandAsync(cmd);
+    return runCommand(getDimensionById(record.dimensionId), cmd);
   }).then(() => {
     player.sendMessage(`§a🧱 Blocks placed! (${width}x${height}x${length} of ${blockId})§r`);
     player.playSound("dig.stone", { volume: 1.0, pitch: 1.2 });
@@ -1192,9 +1204,9 @@ function openLevelGroundMenu(player) {
 
   const form = new ModalFormData()
     .title("🚜 Flatten / Level Ground")
-    .slider("Radius (Blocks around you):", 5, 20, 1, 10)
-    .dropdown("Ground Floor Block:", surfaces.map(s => s.name), 0)
-    .toggle("✨ Show 3D Glowing Preview Guide First", true);
+    .slider("Radius (Blocks around you):", 5, 20, { valueStep: 1, defaultValue: 10 })
+    .dropdown("Ground Floor Block:", surfaces.map(s => s.name), { defaultValueIndex: 0 })
+    .toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
 
   form.show(player).then((response) => {
     if (response.canceled) return;
@@ -1234,7 +1246,7 @@ function executeLevelGroundUnlocked(player, bounds, radius, floorBlock) {
   if (!validateBuildBounds(player, bounds)) return;
   return captureUndoSnapshot(player, bounds, "level").then((record) => {
     const dimension = getDimensionById(record.dimensionId);
-    return dimension.runCommandAsync(clearCmd).then(() => dimension.runCommandAsync(floorCmd));
+    return runCommand(dimension, clearCmd).then(() => runCommand(dimension, floorCmd));
   }).then(() => {
     player.sendMessage(`§a🚜 Land flattened in a ${radius}-block radius with ${floorBlock}! Ready to build!§r`);
     player.playSound("dig.grass", { volume: 1.0, pitch: 1.0 });
@@ -1252,9 +1264,9 @@ function openPlatformMenu(player) {
 
   const form = new ModalFormData()
     .title("🪜 Instant Underfoot Platform")
-    .slider("Platform Size (3x3 to 9x9):", 3, 9, 2, 5)
-    .dropdown("Platform Block:", platformBlocks.map(b => b.name), 0)
-    .toggle("✨ Show 3D Glowing Preview Guide First", true);
+    .slider("Platform Size (3x3 to 9x9):", 3, 9, { valueStep: 2, defaultValue: 5 })
+    .dropdown("Platform Block:", platformBlocks.map(b => b.name), { defaultValueIndex: 0 })
+    .toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
 
   form.show(player).then((response) => {
     if (response.canceled) return;
@@ -1292,7 +1304,7 @@ function executePlatformUnlocked(player, bounds, size, blockId) {
   if (!validateBuildBounds(player, bounds)) return;
   const cmd = `fill ${bounds.x1} ${bounds.y1} ${bounds.z1} ${bounds.x2} ${bounds.y2} ${bounds.z2} ${blockId}`;
   return captureUndoSnapshot(player, bounds, "platform").then((record) => {
-    return getDimensionById(record.dimensionId).runCommandAsync(cmd);
+    return runCommand(getDimensionById(record.dimensionId), cmd);
   }).then(() => {
     player.sendMessage(`§a🪜 ${size}x${size} Platform created under your feet!§r`);
     player.playSound("dig.wood", { volume: 1.0, pitch: 1.2 });
@@ -1497,12 +1509,12 @@ function openBridgeBuilderMenu(player) {
   ];
   const form = new ModalFormData()
     .title("🌉 Build a Bridge")
-    .dropdown("Bridge Material:", materials.map((v) => v.name), 0)
-    .slider("Width:", 3, 9, 2, 3)
-    .slider("Length:", 3, 50, 1, 12)
-    .toggle("Add Safety Railings", true)
-    .dropdown("Railing Material:", railings.map((v) => v.name), 0)
-    .toggle("✨ Show 3D Preview First", true);
+    .dropdown("Bridge Material:", materials.map((v) => v.name), { defaultValueIndex: 0 })
+    .slider("Width:", 3, 9, { valueStep: 2, defaultValue: 3 })
+    .slider("Length:", 3, 50, { valueStep: 1, defaultValue: 12 })
+    .toggle("Add Safety Railings", { defaultValue: true })
+    .dropdown("Railing Material:", railings.map((v) => v.name), { defaultValueIndex: 0 })
+    .toggle("✨ Show 3D Preview First", { defaultValue: true });
   form.show(player).then((response) => {
     if (response.canceled) return;
     const [materialIndex, width, length, addRailings, railingIndex, showGuide] = response.formValues;
@@ -1538,11 +1550,11 @@ function openStairBuilderMenu(player, direction) {
   const label = direction === "up" ? "Up" : "Down";
   const form = new ModalFormData()
     .title(`🪜 Build Stairs ${label}`)
-    .dropdown("Stair Material:", materials.map((v) => v.name), 0)
-    .slider("Width:", 1, 5, 2, 3)
-    .slider("Number of Steps:", 3, 25, 1, 8)
-    .toggle("Clear Two Blocks of Headroom", true)
-    .toggle("✨ Show 3D Preview First", true);
+    .dropdown("Stair Material:", materials.map((v) => v.name), { defaultValueIndex: 0 })
+    .slider("Width:", 1, 5, { valueStep: 2, defaultValue: 3 })
+    .slider("Number of Steps:", 3, 25, { valueStep: 1, defaultValue: 8 })
+    .toggle("Clear Two Blocks of Headroom", { defaultValue: true })
+    .toggle("✨ Show 3D Preview First", { defaultValue: true });
   form.show(player).then((response) => {
     if (response.canceled) return;
     const [materialIndex, width, steps, clearHeadroom, showGuide] = response.formValues;
@@ -1573,12 +1585,12 @@ function createStairPlan(player, width, steps, material, direction, clearHeadroo
 function openAreaCleanupMenu(player) {
   const form = new ModalFormData()
     .title("🧹 Area Cleanup")
-    .slider("Cleanup Radius:", 10, 100, 5, 30)
-    .toggle("Remove Dropped Items", true)
-    .toggle("Remove XP Orbs", true)
-    .toggle("Remove Arrows & Projectiles", true)
-    .toggle("Remove Boats & Minecarts", false)
-    .toggle("Remove Hostile Monsters", false);
+    .slider("Cleanup Radius:", 10, 100, { valueStep: 5, defaultValue: 30 })
+    .toggle("Remove Dropped Items", { defaultValue: true })
+    .toggle("Remove XP Orbs", { defaultValue: true })
+    .toggle("Remove Arrows & Projectiles", { defaultValue: true })
+    .toggle("Remove Boats & Minecarts", { defaultValue: false })
+    .toggle("Remove Hostile Monsters", { defaultValue: false });
   form.show(player).then((response) => {
     if (response.canceled) return;
     const [radius, items, xp, projectiles, vehicles, hostiles] = response.formValues;
@@ -1673,7 +1685,7 @@ async function lightUpArea(player) {
             const block = dim.getBlock({ x: tx, y: ty, z: tz });
             const below = dim.getBlock({ x: tx, y: ty - 1, z: tz });
             if (block && block.isAir && below && !below.isAir && !LIQUID_BLOCKS.has(below.typeId)) {
-              await dim.runCommandAsync(`setblock ${tx} ${ty} ${tz} minecraft:torch`);
+              await runCommand(dim, `setblock ${tx} ${ty} ${tz} minecraft:torch`);
               torchCount++;
               break;
             }
@@ -1697,9 +1709,9 @@ function executeUndoUnlocked(player) {
 
   const undoDimension = getDimensionById(lastAction.dimensionId);
   const loadCmd = `structure load ${lastAction.structureName} ${lastAction.bounds.x1} ${lastAction.bounds.y1} ${lastAction.bounds.z1}`;
-  return undoDimension.runCommandAsync(loadCmd).then(async () => {
+  return runCommand(undoDimension, loadCmd).then(async () => {
     undoHistory.delete(player.id);
-    await undoDimension.runCommandAsync(`structure delete ${lastAction.structureName}`).catch(() => {});
+    await runCommand(undoDimension, `structure delete ${lastAction.structureName}`).catch(() => {});
     player.sendMessage("§a↩️ Undid your last build action!§r");
     player.playSound("random.pop", { volume: 1.0, pitch: 1.0 });
   }).catch((err) => {
@@ -1718,9 +1730,9 @@ function openSpawnAndTeleportMenu(player) {
     .button("📍 Set Spawn Point Here\n§7Save your current spot", "textures/items/bed_red")
     .button("🚀 Teleport to Spawn Point\n§7Warp home to your saved spawn", "textures/items/ender_pearl")
     .button("👥 Teleport to Another Player\n§7Warp directly to Dad, Mom, or friends", "textures/items/name_tag")
-    .button("🌎 Find Nearest Biome\n§7Choose a biome and travel to it", "textures/items/compass_item")
-    .button("🏰 Find Nearest Structure\n§7Choose a structure and travel to it", "textures/items/map_filled")
-    .button("🚀 Travel to Found Coordinates\n§7Type in the X and Z that /locate gave you", "textures/items/paper")
+    .button("🌎 Find Nearest Biome\n§7Show the coordinates of a biome", "textures/items/compass_item")
+    .button("🏰 Find Nearest Structure\n§7Show how to get a structure's coordinates", "textures/items/map_filled")
+    .button("🧭 Teleport to Coordinates\n§7Type in X, Y and Z and warp there", "textures/items/paper")
     .button("⬅️ Back to Main Menu\n§7Return to categories", "textures/ui/arrow_left");
 
   form.show(player).then((response) => {
@@ -1736,13 +1748,13 @@ function openSpawnAndTeleportMenu(player) {
         openTeleportPlayerMenu(player);
         break;
       case 3:
-        openBiomeTeleportMenu(player);
+        openBiomeFinderMenu(player);
         break;
       case 4:
-        openStructureTeleportMenu(player);
+        openStructureFinderMenu(player);
         break;
       case 5:
-        openFoundCoordinatesForm(player);
+        openTeleportToCoordinatesForm(player);
         break;
       case 6:
         openMainMenu(player);
@@ -1771,7 +1783,7 @@ function setSpawnPoint(player) {
   // Bed spawn points are restricted by dimension, but Helper Tools travel
   // points should work everywhere.
   if (String(dimId).replace(/^minecraft:/, "") === "overworld") {
-    player.runCommandAsync(`spawnpoint @s ${x} ${y} ${z}`).then(saveTravelPoint).catch(() => saveTravelPoint());
+    runCommand(player, `spawnpoint @s ${x} ${y} ${z}`).then(saveTravelPoint).catch(() => saveTravelPoint());
   } else {
     saveTravelPoint();
   }
@@ -1855,13 +1867,13 @@ function getCurrentDimensionName(player) {
 }
 
 /**
- * Minecraft prints `/locate` results into the chat window only. The stable
- * script API's CommandResult carries `successCount` and nothing else, so an
- * add-on genuinely cannot read those coordinates back, and a form cannot be
- * open while the player types in chat. So the flow is: pick a destination and
- * get the exact search command, run it in chat, then hand the numbers back
- * with `/scriptevent tools:goto <X> <Z>` or the coordinate form in the menu.
- * Helper Tools takes it from there and lands the player on safe ground.
+ * Finding a place and going there are separate steps. The finders only report
+ * coordinates; 🧭 Teleport to Coordinates (or `/scriptevent tools:goto`) is
+ * where the player types numbers in and actually moves.
+ *
+ * Biomes are looked up from the world seed. Structures have no script API at
+ * all, so for those the player is given the `/locate` command and Minecraft
+ * prints the coordinates in chat.
  */
 const WORLD_EDGE = 29999900;
 
@@ -1881,47 +1893,80 @@ const TRAVEL_LOAD_TICKS = 40;
 // The Nether's bedrock roof starts at Y 124, so surface searches begin below it.
 const NETHER_CEILING_SCAN_Y = 120;
 
-function openBiomeTeleportMenu(player) {
-  openLocateSelectionMenu(player, "biome", BIOME_OPTIONS, "🌎 Nearest Biome");
+function openBiomeFinderMenu(player) {
+  openFinderSelectionMenu(player, BIOME_OPTIONS, "🌎 Nearest Biome",
+    "Pick a biome to see the coordinates of the nearest one.", showNearestBiome);
 }
 
-function openStructureTeleportMenu(player) {
-  openLocateSelectionMenu(player, "structure", STRUCTURE_OPTIONS, "🏰 Nearest Structure");
+function openStructureFinderMenu(player) {
+  openFinderSelectionMenu(player, STRUCTURE_OPTIONS, "🏰 Nearest Structure",
+    "Pick a structure. Helper Tools gives you the command that makes Minecraft show its coordinates in chat.",
+    showStructureLocateCommand);
 }
 
-function openLocateSelectionMenu(player, locateType, allOptions, title) {
+function openFinderSelectionMenu(player, allOptions, title, body, onSelect) {
   const options = allOptions.filter((option) => option.dimensions.includes(getCurrentDimensionName(player)));
-  const form = new ActionFormData()
-    .title(title)
-    .body("Pick a place. Helper Tools gives you the search command to send in chat, then warps you there safely.");
+  const form = new ActionFormData().title(title).body(body);
   for (const option of options) form.button(`${option.name}\n§7${option.id.replace("minecraft:", "")}`);
   form.button("⬅️ Back\n§7Return to Spawn & Teleport");
   form.show(player).then((response) => {
     if (response.canceled) return;
     if (response.selection === options.length) return openSpawnAndTeleportMenu(player);
     const option = options[response.selection];
-    if (option) startLocateSearch(player, locateType, option);
-  }).catch((e) => console.error(`${locateType} menu error: ${e}`));
+    if (option) onSelect(player, option);
+  }).catch((e) => console.error(`${title} menu error: ${e}`));
+}
+
+function findNearestBiome(player, biomeId) {
+  const origin = player.location;
+  const found = player.dimension.calculateClosestBiomeFromSeed(origin, biomeId);
+  if (!found || !Number.isFinite(found.x) || !Number.isFinite(found.z)) return null;
+  const x = Math.floor(found.x);
+  const z = Math.floor(found.z);
+  return { x, z, distance: Math.round(Math.hypot(x - origin.x, z - origin.z)) };
+}
+
+function showNearestBiome(player, option) {
+  let result;
+  try {
+    result = findNearestBiome(player, option.id);
+  } catch (err) {
+    player.sendMessage(`§cCould not search for ${option.name}: ${err}§r`);
+    return;
+  }
+  if (!result) {
+    player.sendMessage(`§eNo ${option.name} could be found from here.§r`);
+    return;
+  }
+
+  player.setDynamicProperty("last_found_location", `${option.name}: X ${result.x}, Z ${result.z}`);
+  player.sendMessage(`§b🌎 Nearest ${option.name}: §fX ${result.x}, Z ${result.z}§b (about ${result.distance} blocks away)§r`);
+  player.playSound("random.orb", { volume: 0.8, pitch: 1.4 });
+
+  const undergroundNote = option.underground ? "\n\nThis biome is underground, so dig down when you get there." : "";
+  new ActionFormData()
+    .title(`🌎 ${option.name}`)
+    .body(`The nearest ${option.name} is at:\n\n§lX ${result.x}    Z ${result.z}§r\n\nAbout ${result.distance} blocks away. The coordinates are in chat too.${undergroundNote}`)
+    .button("🧭 Teleport to Coordinates\n§7Type these numbers in to go there", "textures/items/paper")
+    .button("🌎 Find Another Biome\n§7Back to the biome list", "textures/items/compass_item")
+    .button("✅ Done\n§7Close this window")
+    .show(player).then((response) => {
+      if (response.canceled) return;
+      if (response.selection === 0) openTeleportToCoordinatesForm(player);
+      else if (response.selection === 1) openBiomeFinderMenu(player);
+    }).catch((e) => console.error("Biome result error: " + e));
 }
 
 /**
- * Hands over the search instructions and closes down. No form is opened here
- * on purpose: chat is unusable while a form is on screen, and the player needs
- * chat to run the search.
+ * No form is opened here on purpose: chat is unusable while a form is on
+ * screen, and the player needs chat to run the command.
  */
-function startLocateSearch(player, locateType, option) {
-  player.setDynamicProperty("locate_target_name", option.name);
-  player.sendMessage(`§b§l🔎 Travel to the nearest ${option.name}§r`);
-  player.sendMessage(`§eStep 1.§r Send this in chat: §a/locate ${locateType} ${option.id}§r`);
-  player.sendMessage("§7Minecraft answers with something like §fThe nearest ... is at block 1256, (y?), -648§r");
-  player.sendMessage("§eStep 2.§r Send your two numbers back like this: §a/scriptevent tools:goto 1256 -648§r");
-  player.sendMessage("§7Rather tap than type? Hold the Helper Device and choose §f🚀 Travel to Found Coordinates§7.§r");
+function showStructureLocateCommand(player, option) {
+  player.sendMessage(`§b§l🏰 Where is the nearest ${option.name}?§r`);
+  player.sendMessage(`§eSend this in chat: §a/locate structure ${option.id}§r`);
+  player.sendMessage("§7Minecraft replies with its coordinates, like §fThe nearest ... is at block 1256, (y?), -648§r");
+  player.sendMessage("§7To go there, choose §f🧭 Teleport to Coordinates§7 in the Helper Device and type the numbers in.§r");
   player.playSound("random.orb", { volume: 0.8, pitch: 1.4 });
-}
-
-function getPendingDestinationName(player) {
-  const stored = player.getDynamicProperty("locate_target_name");
-  return typeof stored === "string" && stored.length > 0 ? stored : "your destination";
 }
 
 function extractNumbers(text) {
@@ -1941,7 +1986,7 @@ function coordinatesFromNumbers(values) {
 }
 
 // Parse the coordinate tuple before any trailing distance in a /locate reply.
-function parseTravelCoordinates(text) {
+function parseTeleportCoordinates(text) {
   const input = String(text ?? "").trim();
   if (/^[\d+.,\s-]+$/.test(input)) {
     const tokens = input.split(/[\s,]+/);
@@ -1957,53 +2002,53 @@ function parseTravelCoordinates(text) {
   return null;
 }
 
-function openFoundCoordinatesForm(player) {
-  const destinationName = getPendingDestinationName(player);
+/**
+ * Reads the X, Y and Z boxes. A whole `/locate` reply pasted into the X box is
+ * picked apart too, and a Y box holding no number (blank, or the literal
+ * "(y?)" from `/locate`) means "put me on the surface".
+ */
+function coordinatesFromFormText(xText, yText, zText) {
+  const xNumbers = extractNumbers(xText);
+  if (xNumbers.length >= 2) return parseTeleportCoordinates(xText);
+  const zNumbers = extractNumbers(zText);
+  if (xNumbers.length !== 1 || zNumbers.length !== 1) return null;
+  const coordinates = { x: xNumbers[0], z: zNumbers[0] };
+  const yNumbers = extractNumbers(yText);
+  if (yNumbers.length === 1) coordinates.y = yNumbers[0];
+  return coordinates;
+}
+
+function openTeleportToCoordinatesForm(player) {
+  const lastFound = player.getDynamicProperty("last_found_location");
+  const reminder = typeof lastFound === "string" && lastFound.length > 0 ? `§7Last biome found - ${lastFound}§r\n\n` : "";
   const form = new ModalFormData()
-    .title("🚀 Travel to Found Coordinates")
-    .textField(`X from /locate (${destinationName})`, "Example: 1256", "")
-    .textField("Z from /locate", "Example: -648", "")
-    .textField("Y (optional)", "Leave empty to land on the surface", "")
-    .submitButton("🚀 Travel");
+    .title("🧭 Teleport to Coordinates")
+    .textField(`${reminder}X`, "Example: 1256")
+    .textField("Y (optional)", "Leave empty to land on the surface")
+    .textField("Z", "Example: -648")
+    .submitButton("🚀 Teleport");
 
   form.show(player).then((response) => {
     if (response.canceled) return;
     const values = response.formValues || [];
-    const xText = String(values[0] === undefined ? "" : values[0]).trim();
-    const zText = String(values[1] === undefined ? "" : values[1]).trim();
-    const yText = String(values[2] === undefined ? "" : values[2]).trim();
-
-    const xNumbers = extractNumbers(xText);
-    const zNumbers = extractNumbers(zText);
-    const yNumbers = extractNumbers(yText);
-
-    let coordinates = null;
-    if (xNumbers.length >= 2) {
-      // Whole `/locate` reply pasted into the first box.
-      coordinates = parseTravelCoordinates(xText);
-    } else if (xNumbers.length === 1 && zNumbers.length === 1) {
-      coordinates = { x: xNumbers[0], z: zNumbers[0] };
-      // A Y box holding no number at all (blank, or the literal "(y?)" from
-      // the /locate reply) just means "put me on the surface".
-      if (yNumbers.length === 1) coordinates.y = yNumbers[0];
-    }
-
+    const text = (index) => String(values[index] === undefined ? "" : values[index]).trim();
+    const coordinates = coordinatesFromFormText(text(0), text(1), text(2));
     if (!coordinates) {
-      player.sendMessage("§cType the X and Z numbers from /locate into the boxes. Y can stay empty.§r");
-      system.runTimeout(() => openFoundCoordinatesForm(player), 10);
+      player.sendMessage("§cType a number into the X and Z boxes. Y can stay empty.§r");
+      system.runTimeout(() => openTeleportToCoordinatesForm(player), 10);
       return;
     }
-    travelToFoundCoordinates(player, coordinates, destinationName);
-  }).catch((e) => console.error("Found coordinates form error: " + e));
+    teleportToCoordinates(player, coordinates);
+  }).catch((e) => console.error("Teleport to coordinates form error: " + e));
 }
 
-function handleTravelScriptEvent(player, message) {
-  const coordinates = parseTravelCoordinates(message);
+function handleTeleportScriptEvent(player, message) {
+  const coordinates = parseTeleportCoordinates(message);
   if (!coordinates) {
-    player.sendMessage("§cUse §f/scriptevent tools:goto <X> <Z>§c — for example §f/scriptevent tools:goto 1256 -648§r");
+    player.sendMessage("§cUse §f/scriptevent tools:goto <X> <Z>§c or §f<X> <Y> <Z>§c, for example §f/scriptevent tools:goto 1256 -648§r");
     return;
   }
-  travelToFoundCoordinates(player, coordinates, getPendingDestinationName(player));
+  teleportToCoordinates(player, coordinates);
 }
 
 function getTravelAreaName(player) {
@@ -2011,15 +2056,15 @@ function getTravelAreaName(player) {
 }
 
 function removeTravelArea(dimension, areaName) {
-  return dimension.runCommandAsync(`tickingarea remove ${areaName}`).then(() => {}, () => {});
+  return runCommand(dimension, `tickingarea remove ${areaName}`).then(() => {}, () => {});
 }
 
 /**
  * Loads the destination first so the landing spot can be worked out before the
  * player moves. `getBlock` throws on unloaded chunks, which is exactly what a
- * far-away `/locate` result is, so a temporary ticking area does the loading.
+ * far-away destination is, so a temporary ticking area does the loading.
  */
-async function travelToFoundCoordinates(player, coordinates, destinationName) {
+async function teleportToCoordinates(player, coordinates) {
   const id = player.id;
   if (activeTravels.has(id)) {
     player.sendMessage("§ePlease wait for your current trip to finish.§r");
@@ -2043,7 +2088,7 @@ async function travelToFoundCoordinates(player, coordinates, destinationName) {
     let spot = findArrivalSpot(dimension, x, z, requestedY);
     if (!spot) {
       const areaY = requestedY ?? Math.floor((range.min + range.max) / 2);
-      await dimension.runCommandAsync(`tickingarea add circle ${x} ${areaY} ${z} ${TRAVEL_AREA_RADIUS} ${areaName} true`);
+      await runCommand(dimension, `tickingarea add circle ${x} ${areaY} ${z} ${TRAVEL_AREA_RADIUS} ${areaName} true`);
       areaCreated = true;
       for (let attempt = 0; attempt < 5 && !spot; attempt++) {
         await new Promise((resolve) => system.runTimeout(resolve, TRAVEL_LOAD_TICKS));
@@ -2059,7 +2104,7 @@ async function travelToFoundCoordinates(player, coordinates, destinationName) {
     player.addEffect("resistance", 200, { amplifier: 4, showParticles: false });
     player.addEffect("fire_resistance", 200, { amplifier: 0, showParticles: false });
     player.teleport({ x: spot.x + 0.5, y: spot.y, z: spot.z + 0.5 }, { dimension });
-    player.sendMessage(`§b🚀 Arrived at ${destinationName}! You are at ${spot.x}, ${spot.y}, ${spot.z}.§r`);
+    player.sendMessage(`§b🚀 Teleported! You are at ${spot.x}, ${spot.y}, ${spot.z}.§r`);
     player.playSound("mob.endermen.portal", { volume: 0.9, pitch: 1.0 });
   } catch (err) {
     if (isValidEntity(player)) player.sendMessage(`§cCould not complete travel: ${err}. No unchecked landing will be attempted.§r`);

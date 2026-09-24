@@ -1,6 +1,6 @@
 # 🪄 Minecraft Bedrock Helper Tools Add-On
 
-Requires Minecraft Bedrock **1.21.20 or newer**.
+Requires Minecraft Bedrock **1.26.30 or newer** (Script API 2.9).
 
 A complete, feature-rich Minecraft Bedrock Add-On created to give players an easy-to-use **Helper Device** (Magic Wand). When held and activated, it brings up a colorful, intuitive graphical menu packed with safety helpers, 3D holographic builder tools, superpowers, pet summoners, and multiplayer fast-travel!
 
@@ -54,24 +54,20 @@ A complete, feature-rich Minecraft Bedrock Add-On created to give players an eas
 * 📍 **Set Spawn Point Here**: Saves the player's current spot as their spawn point.
 * 🚀 **Teleport to Spawn Point**: Instantly warps back to the saved spawn point from anywhere in the world.
 * 👥 **Teleport to Another Player**: Lists online players (Dad, Mom, or friends) and teleports directly to them with one tap!
-* 🌎 **Find Nearest Biome**: Choose any biome that exists in the dimension you are standing in (Overworld, Nether, or The End).
-* 🏰 **Find Nearest Structure**: Same list idea for villages, trial chambers, fortresses, End cities, ancient cities, and more.
-* 🚀 **Travel to Found Coordinates**: The warp step for both of the above.
+* 🌎 **Find Nearest Biome**: Choose any biome that exists in the dimension you are standing in (Overworld, Nether, or The End). Helper Tools shows the X and Z coordinates of the nearest one and how far away it is, and also posts them in chat. It does not move you.
+* 🏰 **Find Nearest Structure**: Choose a village, trial chamber, fortress, End city, ancient city, and more. Helper Tools gives you the `/locate` command to send in chat, and Minecraft replies with the coordinates.
+* 🧭 **Teleport to Coordinates**: Type in X, Y and Z and warp there. Y is optional; leave it empty to land on the surface.
 
-#### How biome & structure travel works
+#### Finding a place and going there
 
-Minecraft prints `/locate` results into the chat window only — the add-on has no way to read those numbers back, and no menu can be on screen while you type in chat. So travelling takes two quick steps:
+Finding and teleporting are separate on purpose, so you always see where a place is before deciding to go.
 
-1. Pick a biome or structure. Helper Tools closes the menu and prints the exact search command, for example `/locate structure minecraft:village`. Send that in chat.
-2. Minecraft answers with something like `The nearest village is at block 1256, (y?), -648`. Send those two numbers straight back:
+* **Biomes**: the add-on looks the biome up from the world seed and shows its coordinates in a window. Because the search uses the seed, the answer describes how the world was generated, so terrain you have changed since may look different.
+* **Structures**: no Script API can search for structures, so Helper Tools closes the menu and prints the exact command, for example `/locate structure minecraft:village`. Minecraft answers with something like `The nearest village is at block 1256, (y?), -648`.
 
-   ```
-   /scriptevent tools:goto 1256 -648
-   ```
+To go somewhere, open **📍 Spawn & Teleport** ➔ **🧭 Teleport to Coordinates** and type the numbers in. The window reminds you of the last biome you found. You can also paste a whole `The nearest ...` line into the X box and it picks the numbers out. Prefer chat? `/scriptevent tools:goto 1256 -648` (or `/scriptevent tools:goto 1256 70 -648` with a height) does the same thing.
 
-   Prefer tapping to typing? Hold the Helper Device, open **📍 Spawn & Teleport**, and choose **🚀 Travel to Found Coordinates** to type the numbers into a box instead. You can paste the whole `The nearest ...` line into the first box and it will pick the numbers out for you.
-
-Either way Helper Tools loads the destination first, finds solid ground with headroom (never lava, never the Nether's bedrock roof, and never buried inside rock), and puts you down there in one hop with Resistance and Fire Resistance for the landing.
+Helper Tools loads the destination first, finds solid ground with headroom (never lava, never the Nether's bedrock roof, and never buried inside rock), and puts you down there in one hop with Resistance and Fire Resistance for the landing. If there is nowhere safe to stand, you stay where you are.
 
 ---
 
@@ -132,6 +128,12 @@ When creating a new world (or editing an existing world):
    - Open any Helper Device you still have and tap **🎁 Get Extra Helper Device**, or
    - Type `/scriptevent tools:device` in chat and a new one is added to your inventory.
 
+## Version 1.2.0 changes
+
+- Upgraded to Script API `@minecraft/server` 2.9.0 and `@minecraft/server-ui` 2.0.0, so the add-on now needs Minecraft Bedrock 1.26.30 or newer.
+- 🌎 Find Nearest Biome now shows the biome's coordinates directly instead of asking you to run `/locate`.
+- 🏰 Find Nearest Structure gives you the `/locate` command, and teleporting is a separate 🧭 Teleport to Coordinates step with X, Y and Z boxes.
+
 ## Version 1.1.1 fixes and verification
 
 - The Helper Device now has an always-usable activation component, including at full hunger.
@@ -141,4 +143,4 @@ When creating a new world (or editing an existing world):
 - A player can run only one build or undo at a time, protecting the undo snapshot from overlapping operations.
 - Landing searches also work on API versions without `getTopmostBlock`.
 
-Run `node --test tests/regression.cjs` for the mocked Script API regression tests, and `bash build.sh` to rebuild all three installers. These tests do not replace Minecraft testing. Check device activation at full hunger in Creative and Survival on touch and desktop, one-block digging and undo, base building and undo, and travel to loaded terrain, unloaded terrain, Nether caves, and End void in a test world.
+Run `node --test tests/regression.cjs` for the mocked Script API regression tests, and `bash build.sh` to rebuild all three installers. These tests do not replace Minecraft testing. Check device activation at full hunger in Creative and Survival on touch and desktop, one-block digging and undo, base building and undo, and biome lookups in each dimension, and teleporting to loaded terrain, unloaded terrain, Nether caves, and End void in a test world.
