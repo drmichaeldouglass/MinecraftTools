@@ -6,6 +6,9 @@ const path = require('node:path');
 
 function harness() {
   const callbacks = [];
+  const intervals = new Map();
+  let nextIntervalId = 0;
+  const clearedIntervals = [];
   const dimensions = new Map();
   const signal = { subscribe() {} };
   const world = {
@@ -14,7 +17,9 @@ function harness() {
   };
   const system = {
     afterEvents: { scriptEventReceive: signal }, runTimeout: fn => callbacks.push(fn),
-    run: fn => callbacks.push(fn), runInterval: () => 1, clearRun() {}
+    run: fn => callbacks.push(fn),
+    runInterval: fn => { const id = ++nextIntervalId; intervals.set(id, fn); return id; },
+    clearRun(id) { clearedIntervals.push(id); intervals.delete(id); }
   };
   const ctx = vm.createContext({ world, system, console, ItemStack: class {} });
   const source = fs.readFileSync(process.env.TOOLS_SOURCE || path.join(__dirname, '../Behavior_Pack/scripts/main.js'), 'utf8');
@@ -35,7 +40,7 @@ function harness() {
     for (const fn of callbacks.splice(0)) fn();
     await new Promise(resolve => setImmediate(resolve));
   }
-  return { ctx, player, dimension, callbacks, tick };
+  return { ctx, player, dimension, callbacks, tick, intervals, clearedIntervals };
 }
 
 test('dig depth starts below the feet for all facings', () => {
@@ -210,4 +215,173 @@ test('biome finder reports when nothing is found', () => {
   ctx.showNearestBiome(player, { name: 'Plains', id: 'minecraft:plains' });
   assert.ok(player.messages.some(m => m.includes('No Plains')));
   assert.equal(player.teleports.length, 0);
+});
+
+
+test('coordinate boxes reject malformed values instead of extracting unrelated digits', () => {
+  const { ctx } = harness();
+  for (const args of [
+    ['1..2', '', '3'], ['10abc', '', '20'], ['10', '64 70', '20'],
+    ['10', 'bad Y', '20'], ['10', '', '20abc'], ['10', '', '2..3'],
+    ['1 2 3', '64', '20'], ['9'.repeat(400), '', '20']
+  ]) assert.equal(ctx.coordinatesFromFormText(...args), null, args.join(' / '));
+  assert.equal(ctx.parseTeleportCoordinates(`1 ${'9'.repeat(400)} 2`),null);
+  assert.equal(ctx.coordinatesFromFormText(`Nearest place at 1, ${'9'.repeat(400)}, 2`, '', ''),null);
+  assert.equal(ctx.coordinatesFromFormText('+10', '-40.5', '-20').y, -40.5);
+  assert.equal(ctx.coordinatesFromFormText('10', ' (y?) ', '20').y, undefined);
+});
+
+function previewForms(ctx) {
+  const pending = [];
+  ctx.MessageFormData = class {
+    title() { return this; } body() { return this; }
+    button1() { return this; } button2() { return this; }
+    show() { return new Promise((resolve, reject) => pending.push({ resolve, reject })); }
+  };
+  return pending;
+}
+const previewBounds = { x1:0, y1:64, z1:1, x2:2, y2:66, z2:3 };
+
+test('a superseded preview cannot execute or clear the replacement preview', async () => {
+  const { ctx, player, tick, intervals } = harness();
+  const pending = previewForms(ctx);
+  let oldBuilds = 0, newBuilds = 0;
+  ctx.startPreview(player, previewBounds, 'particle', 'Old', () => oldBuilds++);
+  await tick();
+  ctx.startPreview(player, previewBounds, 'particle', 'New', () => newBuilds++);
+  await tick();
+  pending[0].resolve({ canceled:false, selection:0 });
+  await tick();
+  assert.equal(oldBuilds, 0);
+  assert.equal(intervals.size, 1);
+  pending[1].resolve({ canceled:false, selection:0 });
+  await tick();
+  assert.equal(newBuilds, 1);
+  assert.equal(intervals.size, 0);
+});
+
+test('rejected preview clears its ticker, and a delayed obsolete preview never opens', async () => {
+  const { ctx, player, tick, intervals } = harness();
+  const pending = previewForms(ctx);
+  ctx.startPreview(player, previewBounds, 'particle', 'Old', () => assert.fail('obsolete build'));
+  ctx.startPreview(player, previewBounds, 'particle', 'New', () => {});
+  await tick();
+  assert.equal(pending.length, 1);
+  const originalError = console.error;
+  console.error = () => {};
+  try { pending[0].reject(new Error('form unavailable')); await tick(); }
+  finally { console.error = originalError; }
+  assert.equal(intervals.size, 0);
+});
+
+test('preview confirmation remains usable after its drawing expires', async () => {
+  const { ctx, player, tick, intervals } = harness();
+  const pending = previewForms(ctx);
+  let builds = 0;
+  ctx.startPreview(player, previewBounds, 'particle', 'Build', () => builds++);
+  await tick();
+  const ticker = [...intervals.values()][0];
+  for (let i = 0; i < 61; i++) ticker();
+  assert.equal(intervals.size, 0);
+  pending[0].resolve({ canceled:false, selection:0 });
+  await tick();
+  assert.equal(builds, 1);
+});
+
+function blockWorld(dimension) {
+  const blocks = new Map();
+  dimension.getBlock = ({x,y,z}) => {
+    const typeId = blocks.get(`${x},${y},${z}`) || (y < 64 ? 'minecraft:stone' : 'minecraft:air');
+    return { typeId, isAir:typeId === 'minecraft:air' };
+  };
+  dimension.runCommand = command => {
+    const p = command.split(/\s+/);
+    if (p[0] !== 'fill' && p[0] !== 'setblock') return { successCount:1 };
+    const fill = p[0] === 'fill';
+    const [x1,y1,z1] = p.slice(1,4).map(Number);
+    const [x2,y2,z2] = fill ? p.slice(4,7).map(Number) : [x1,y1,z1];
+    const typeId = p[fill ? 7 : 4];
+    let changed = 0;
+    for(let x=x1;x<=x2;x++) for(let y=y1;y<=y2;y++) for(let z=z1;z<=z2;z++) {
+      if(dimension.getBlock({x,y,z}).typeId !== typeId) {
+        blocks.set(`${x},${y},${z}`,typeId); changed++;
+      }
+    }
+    if (!changed) throw new Error('No blocks changed');
+    return { successCount:changed };
+  };
+}
+
+test('all base templates and staircases finish despite already-empty air and duplicate placements', async () => {
+  for (const facing of [{x:1,z:0},{x:-1,z:0},{x:0,z:1},{x:0,z:-1}]) {
+    for (const key of ['simple_house','large_house','fort','tree_house','bunker','stairs_up','stairs_down']) {
+      const { ctx, player, dimension } = harness();
+      player.getViewDirection = () => facing;
+      blockWorld(dimension);
+      const plan = key.startsWith('stairs')
+        ? ctx.createStairPlan(player,3,8,'minecraft:stone_bricks',key.endsWith('up')?'up':'down',true)
+        : ctx.createBaseTemplatePlan(player,key);
+      await ctx.executeBuildPlan(player,plan,key,'Completed');
+      assert.ok(player.messages.some(m=>m.includes('Completed')), key);
+      assert.ok(!player.messages.some(m=>m.includes('command failed')), key);
+      await ctx.executeUndo(player);
+      assert.ok(player.messages.some(m=>m.includes('Undid')), key);
+    }
+  }
+});
+
+test('flattening already-clear ground still places its new floor', async () => {
+  const { ctx, player, dimension } = harness();
+  blockWorld(dimension);
+  const b = { x1:-5,y1:63,z1:-5,x2:5,y2:74,z2:5 };
+  await ctx.executeLevelGround(player,b,5,'minecraft:grass_block');
+  assert.equal(dimension.getBlock({x:0,y:63,z:0}).typeId,'minecraft:grass_block');
+  assert.ok(player.messages.some(m=>m.includes('Land flattened')));
+});
+
+test('real block-command failures still stop a build and preserve its undo', async () => {
+  const { ctx, player, dimension } = harness();
+  dimension.getBlock = () => ({ typeId:'minecraft:air',isAir:true });
+  const commands = [];
+  dimension.runCommand = c => {
+    commands.push(c);
+    if(c.startsWith('fill')) throw new Error('invalid block');
+    return { successCount:1 };
+  };
+  const plan = { name:'test',dimensionId:dimension.id,bounds:previewBounds,
+    commands:['fill 0 64 1 2 66 3 minecraft:missing','setblock 0 64 1 minecraft:stone'] };
+  await ctx.executeBuildPlan(player,plan,'test','Completed');
+  assert.ok(player.messages.some(m=>m.includes('command failed')));
+  assert.ok(!commands.some(c=>c.startsWith('setblock')));
+  await ctx.executeUndo(player);
+  assert.ok(commands.some(c=>c.startsWith('structure load')));
+  dimension.getBlock = () => { throw new Error('unloaded'); };
+  await assert.rejects(ctx.runBlockCommand(dimension,'fill 0 64 1 2 66 3 minecraft:air'),/invalid block/);
+});
+
+
+test('dimension changes and disconnects invalidate a pending preview confirmation', async () => {
+  for (const disconnect of [false, true]) {
+    const { ctx, player, tick, intervals } = harness();
+    const pending = previewForms(ctx);
+    ctx.startPreview(player, previewBounds, 'particle', 'Build', () => assert.fail('stale build'));
+    await tick();
+    if (disconnect) player.isValid = false;
+    else player.dimension = { id:'minecraft:nether' };
+    pending[0].resolve({ canceled:false, selection:0 });
+    await tick();
+    assert.equal(intervals.size, 0);
+  }
+});
+
+test('no-op checks respect hollow interiors, outline shells and unavailable blocks', () => {
+  const { ctx, dimension } = harness();
+  dimension.getBlock = ({x,y,z}) => ({typeId: x===1 && y===65 && z===1 ? 'minecraft:dirt' : 'minecraft:stone'});
+  assert.equal(ctx.blockCommandIsSatisfied(dimension,'fill 0 64 0 2 66 2 minecraft:stone outline'),true);
+  assert.equal(ctx.blockCommandIsSatisfied(dimension,'fill 0 64 0 2 66 2 minecraft:stone hollow'),false);
+  dimension.getBlock = ({x,y,z}) => ({typeId: x===1 && y===65 && z===1 ? 'minecraft:air' : 'minecraft:stone'});
+  assert.equal(ctx.blockCommandIsSatisfied(dimension,'fill 0 64 0 2 66 2 minecraft:stone hollow'),true);
+  dimension.getBlock = () => undefined;
+  assert.equal(ctx.blockCommandIsSatisfied(dimension,'fill 0 64 0 2 66 2 minecraft:air'),false);
+  assert.equal(ctx.blockCommandIsSatisfied(dimension,'fill 2 66 2 0 64 0 minecraft:air'),false);
 });

@@ -128,6 +128,15 @@ When creating a new world (or editing an existing world):
    - Open any Helper Device you still have and tap **🎁 Get Extra Helper Device**, or
    - Type `/scriptevent tools:device` in chat and a new one is added to your inventory.
 
+## Version 1.2.1 fixes and verification
+
+- Base templates, stairs, digging, filling, platforms, and flattening can finish when some target blocks already have the requested type. A failed command is accepted only if the loaded target area matches its requested block types, including hollow interiors and outline shells. Other failures still stop the build and leave Undo available after a successful snapshot.
+- An older preview cannot execute its build or cancel a newer preview. Failed forms clear their preview ticker, and confirmation is rejected after disconnecting or changing dimensions.
+- Coordinate boxes reject malformed values rather than extracting unrelated digits or silently ignoring an invalid Y value. Paste a whole locate reply into X with Y and Z empty.
+- Both packs and all three installers are updated to version 1.2.1 so Minecraft can recognize the update.
+
+Run `node tests/regression.cjs` for the 25 mocked Script API regression tests, including all five base templates and both stair directions in all four facings. Run `bash build.sh` to rebuild the installers. Verify preview cancellation, template completion and undo, and coordinate travel in a disposable Minecraft world before using the update in a world you care about. Minecraft itself is not available in the automated test environment.
+
 ## Version 1.2.0 changes
 
 - Upgraded to Script API `@minecraft/server` 2.9.0 and `@minecraft/server-ui` 2.0.0, so the add-on now needs Minecraft Bedrock 1.26.30 or newer.

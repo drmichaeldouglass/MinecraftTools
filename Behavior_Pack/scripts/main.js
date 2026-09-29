@@ -44,7 +44,7 @@ function executeUndo(player, ...args) {
   return runExclusiveBuild(player, () => executeUndoUnlocked(player, ...args));
 }
 
-// Active preview ticker storage: Map<playerId, intervalId>
+// Active preview sessions: Map<playerId, { intervalId }>
 const activePreviews = new Map();
 
 // itemStartUse and itemUse can both fire for the same interaction.
@@ -340,7 +340,7 @@ if (world.afterEvents.playerLeave) {
   world.afterEvents.playerLeave.subscribe((event) => {
     const previewId = activePreviews.get(event.playerId);
     if (previewId !== undefined) {
-      system.clearRun(previewId);
+      system.clearRun(previewId.intervalId);
       activePreviews.delete(event.playerId);
     }
     deviceMenuCooldowns.delete(event.playerId);
@@ -803,27 +803,33 @@ function drawBoxOutline(dimension, bounds, particleName = "minecraft:villager_ha
  * Start 3D visual preview and prompt player with confirmation dialog
  */
 function startPreview(player, bounds, particleName, promptText, onConfirm) {
-  if (activePreviews.has(player.id)) {
-    system.clearRun(activePreviews.get(player.id));
-    activePreviews.delete(player.id);
-  }
+  const id = player.id;
+  const previous = activePreviews.get(id);
+  if (previous) system.clearRun(previous.intervalId);
 
   const dimension = player.dimension;
   const dimensionId = dimension.id;
+  const session = { intervalId: undefined };
+  activePreviews.set(id, session);
+  const isCurrent = () => activePreviews.get(id) === session;
+  const stop = () => {
+    system.clearRun(session.intervalId);
+    if (isCurrent()) activePreviews.delete(id);
+  };
   let ticks = 0;
-  const maxTicks = 300; // 15 seconds
-
-  const intervalId = system.runInterval(() => {
+  session.intervalId = system.runInterval(() => {
     ticks += 5;
-    if (ticks > maxTicks || !isValidEntity(player)) {
-      system.clearRun(intervalId);
-      activePreviews.delete(player.id);
+    if (!isCurrent() || !isValidEntity(player) || player.dimension.id !== dimensionId) {
+      stop();
+      return;
+    }
+    if (ticks > 300) {
+      // Stop drawing after 15 seconds, but keep this confirmation valid.
+      system.clearRun(session.intervalId);
       return;
     }
     drawBoxOutline(dimension, bounds, particleName, 1.0);
   }, 5);
-
-  activePreviews.set(player.id, intervalId);
 
   player.playSound("random.orb", { volume: 0.8, pitch: 1.4 });
   player.sendMessage("§e✨ Visual Guide Active! Look at the glowing box in front of you.§r");
@@ -835,13 +841,16 @@ function startPreview(player, bounds, particleName, promptText, onConfirm) {
     .button2("❌ Cancel");
 
   system.runTimeout(() => {
-    if (!isValidEntity(player)) return;
+    if (!isCurrent()) return;
+    if (!isValidEntity(player) || player.dimension.id !== dimensionId) {
+      stop();
+      return;
+    }
     confirmForm.show(player).then((res) => {
-      if (activePreviews.has(player.id)) {
-        system.clearRun(activePreviews.get(player.id));
-        activePreviews.delete(player.id);
-      }
-
+      // An older form must never clear or execute a newer preview.
+      if (!isCurrent()) return;
+      stop();
+      if (!isValidEntity(player)) return;
       if (!res.canceled && res.selection === 0) {
         if (player.dimension.id !== dimensionId) {
           player.sendMessage("§eYou changed dimensions after opening the preview. Open the builder again here.§r");
@@ -851,7 +860,10 @@ function startPreview(player, bounds, particleName, promptText, onConfirm) {
       } else {
         player.sendMessage("§7Action canceled.§r");
       }
-    }).catch((e) => console.error("Confirm form error: " + e));
+    }).catch((e) => {
+      stop();
+      console.error("Confirm form error: " + e);
+    });
   }, 8);
 }
 
@@ -1060,8 +1072,44 @@ function pushShellCommands(commands, context, x1, y1, z1, x2, y2, z2, blockId) {
   commands.push(fillLocal(context, x1, y1, z2, x2, y2, z2, blockId));
 }
 
+// Commands can fail when their target blocks already have the requested type.
+// Verify the actual result instead of matching localized error text or swallowing
+// failures such as unloaded chunks, invalid block IDs, or height limits.
+function blockCommandIsSatisfied(dimension, command) {
+  const parts = command.split(/\s+/);
+  if (parts[0] !== "fill" && parts[0] !== "setblock") return false;
+  const isFill = parts[0] === "fill";
+  const coords = parts.slice(1, isFill ? 7 : 4).map(Number);
+  if (!coords.every(Number.isInteger)) return false;
+  const [x1, y1, z1] = coords;
+  const [x2, y2, z2] = isFill ? coords.slice(3) : coords;
+  if (x1 > x2 || y1 > y2 || z1 > z2) return false;
+  const blockId = parts[isFill ? 7 : 4];
+  const mode = parts[isFill ? 8 : 5] || "replace";
+  if (!isValidBlockId(blockId) || !["replace", "hollow", "outline"].includes(mode)) return false;
+  if (parts.length > (isFill ? 9 : 6)) return false;
+  try {
+    for (let x = x1; x <= x2; x++) for (let y = y1; y <= y2; y++) for (let z = z1; z <= z2; z++) {
+      const boundary = x === x1 || x === x2 || y === y1 || y === y2 || z === z1 || z === z2;
+      if (!boundary && mode === "outline") continue;
+      const expected = !boundary && mode === "hollow" ? "minecraft:air" : blockId;
+      const block = dimension.getBlock({ x, y, z });
+      if (!block || block.typeId !== expected) return false;
+    }
+    return true;
+  } catch (e) { return false; }
+}
+
+async function runBlockCommand(dimension, command) {
+  try { return await runCommand(dimension, command); }
+  catch (err) {
+    if (!blockCommandIsSatisfied(dimension, command)) throw err;
+    return { successCount: 0 };
+  }
+}
+
 async function runBuildCommands(dimension, commands) {
-  for (const command of commands) await runCommand(dimension, command);
+  for (const command of commands) await runBlockCommand(dimension, command);
 }
 
 function executeBuildPlanUnlocked(player, plan, actionType, successMessage, sound = "dig.stone") {
@@ -1121,7 +1169,7 @@ function executeDigHoleUnlocked(player, bounds, width, depth, length, hollow) {
   const cmd = `fill ${digBounds.x1} ${digBounds.y1} ${digBounds.z1} ${digBounds.x2} ${digBounds.y2} ${digBounds.z2} minecraft:air`;
 
   return captureUndoSnapshot(player, digBounds, "hole").then((record) => {
-    return runCommand(getDimensionById(record.dimensionId), cmd);
+    return runBlockCommand(getDimensionById(record.dimensionId), cmd);
   }).then(() => {
     player.sendMessage(`§a🕳️ Hole created! (${width} wide, ${depth} deep, ${length} forward)§r`);
     player.playSound("dig.stone", { volume: 1.0, pitch: 0.8 });
@@ -1183,7 +1231,7 @@ function executeFillBlocksUnlocked(player, bounds, blockId, width, height, lengt
   const cmd = `fill ${bounds.x1} ${bounds.y1} ${bounds.z1} ${bounds.x2} ${bounds.y2} ${bounds.z2} ${blockId} ${style}`;
 
   return captureUndoSnapshot(player, bounds, "fill").then((record) => {
-    return runCommand(getDimensionById(record.dimensionId), cmd);
+    return runBlockCommand(getDimensionById(record.dimensionId), cmd);
   }).then(() => {
     player.sendMessage(`§a🧱 Blocks placed! (${width}x${height}x${length} of ${blockId})§r`);
     player.playSound("dig.stone", { volume: 1.0, pitch: 1.2 });
@@ -1246,7 +1294,7 @@ function executeLevelGroundUnlocked(player, bounds, radius, floorBlock) {
   if (!validateBuildBounds(player, bounds)) return;
   return captureUndoSnapshot(player, bounds, "level").then((record) => {
     const dimension = getDimensionById(record.dimensionId);
-    return runCommand(dimension, clearCmd).then(() => runCommand(dimension, floorCmd));
+    return runBlockCommand(dimension, clearCmd).then(() => runBlockCommand(dimension, floorCmd));
   }).then(() => {
     player.sendMessage(`§a🚜 Land flattened in a ${radius}-block radius with ${floorBlock}! Ready to build!§r`);
     player.playSound("dig.grass", { volume: 1.0, pitch: 1.0 });
@@ -1304,7 +1352,7 @@ function executePlatformUnlocked(player, bounds, size, blockId) {
   if (!validateBuildBounds(player, bounds)) return;
   const cmd = `fill ${bounds.x1} ${bounds.y1} ${bounds.z1} ${bounds.x2} ${bounds.y2} ${bounds.z2} ${blockId}`;
   return captureUndoSnapshot(player, bounds, "platform").then((record) => {
-    return runCommand(getDimensionById(record.dimensionId), cmd);
+    return runBlockCommand(getDimensionById(record.dimensionId), cmd);
   }).then(() => {
     player.sendMessage(`§a🪜 ${size}x${size} Platform created under your feet!§r`);
     player.playSound("dig.wood", { volume: 1.0, pitch: 1.2 });
@@ -1969,17 +2017,12 @@ function showStructureLocateCommand(player, option) {
   player.playSound("random.orb", { volume: 0.8, pitch: 1.4 });
 }
 
-function extractNumbers(text) {
-  const matches = String(text === undefined || text === null ? "" : text).match(/-?\d+(?:\.\d+)?/g);
-  if (!matches) return [];
-  return matches.map(Number).filter((value) => Number.isFinite(value));
-}
-
 /**
  * Two numbers are X and Z (the shape `/locate` reports, where the height comes
  * back as "(y?)"); three are X, Y and Z.
  */
 function coordinatesFromNumbers(values) {
+  if (!values.every(Number.isFinite)) return null;
   if (values.length === 2) return { x: values[0], z: values[1] };
   if (values.length === 3) return { x: values[0], y: values[1], z: values[2] };
   return null;
@@ -1997,24 +2040,33 @@ function parseTeleportCoordinates(text) {
   if (tuple) {
     const result = { x: Number(tuple[1]), z: Number(tuple[3]) };
     if (tuple[2] !== undefined) result.y = Number(tuple[2]);
-    return result;
+    return [result.x, result.z, ...(result.y === undefined ? [] : [result.y])].every(Number.isFinite) ? result : null;
   }
   return null;
 }
 
 /**
  * Reads the X, Y and Z boxes. A whole `/locate` reply pasted into the X box is
- * picked apart too, and a Y box holding no number (blank, or the literal
- * "(y?)" from `/locate`) means "put me on the surface".
+ * picked apart too. A blank Y box or the literal "(y?)" from `/locate`
+ * means "put me on the surface"; other nonnumeric values are rejected.
  */
 function coordinatesFromFormText(xText, yText, zText) {
-  const xNumbers = extractNumbers(xText);
-  if (xNumbers.length >= 2) return parseTeleportCoordinates(xText);
-  const zNumbers = extractNumbers(zText);
-  if (xNumbers.length !== 1 || zNumbers.length !== 1) return null;
-  const coordinates = { x: xNumbers[0], z: zNumbers[0] };
-  const yNumbers = extractNumbers(yText);
-  if (yNumbers.length === 1) coordinates.y = yNumbers[0];
+  const x = String(xText ?? "").trim();
+  const y = String(yText ?? "").trim();
+  const z = String(zText ?? "").trim();
+  const numberPattern = /^[+-]?\d+(?:\.\d+)?$/;
+  // A pasted tuple/reply belongs in X alone; do not silently ignore Y or Z.
+  if (!numberPattern.test(x)) {
+    return !y && !z ? parseTeleportCoordinates(x) : null;
+  }
+  if (!numberPattern.test(z)) return null;
+  const coordinates = { x: Number(x), z: Number(z) };
+  if (y && !/^(?:\(\s*y\s*\?\s*\)|~|\?)$/i.test(y)) {
+    if (!numberPattern.test(y)) return null;
+    coordinates.y = Number(y);
+  }
+  if (!Number.isFinite(coordinates.x) || !Number.isFinite(coordinates.z) ||
+      (coordinates.y !== undefined && !Number.isFinite(coordinates.y))) return null;
   return coordinates;
 }
 
@@ -2034,7 +2086,7 @@ function openTeleportToCoordinatesForm(player) {
     const text = (index) => String(values[index] === undefined ? "" : values[index]).trim();
     const coordinates = coordinatesFromFormText(text(0), text(1), text(2));
     if (!coordinates) {
-      player.sendMessage("§cType a number into the X and Z boxes. Y can stay empty.§r");
+      player.sendMessage("§cEnter valid numbers for X and Z, and a number or an empty box for Y. Paste a locate reply into X with Y and Z empty.§r");
       system.runTimeout(() => openTeleportToCoordinatesForm(player), 10);
       return;
     }
