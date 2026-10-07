@@ -85,7 +85,7 @@ Helper Tools loads the destination first, finds solid ground with headroom (neve
 
 ### Option A: One-Click `.mcaddon` Installation (Recommended)
 
-1. Double-click or open **`HelperTools.mcaddon`** (located in this folder).
+1. Double-click or open **`dist/HelperTools.mcaddon`** (in the `dist` folder of this repository).
 2. Minecraft will launch automatically and import both the Behavior Pack and Resource Pack.
 
 #### On iPad / iPhone (iOS):
@@ -135,7 +135,7 @@ When creating a new world (or editing an existing world):
 - Coordinate boxes reject malformed values rather than extracting unrelated digits or silently ignoring an invalid Y value. Paste a whole locate reply into X with Y and Z empty.
 - Both packs and all three installers are updated to version 1.2.1 so Minecraft can recognize the update.
 
-Run `node tests/regression.cjs` for the 25 mocked Script API regression tests, including all five base templates and both stair directions in all four facings. Run `bash build.sh` to rebuild the installers. Verify preview cancellation, template completion and undo, and coordinate travel in a disposable Minecraft world before using the update in a world you care about. Minecraft itself is not available in the automated test environment.
+Run `node tests/regression.cjs` for the 25 mocked Script API regression tests, including all five base templates and both stair directions in all four facings. Run `bash build.sh` to rebuild the installers in `dist/`. Verify preview cancellation, template completion and undo, and coordinate travel in a disposable Minecraft world before using the update in a world you care about. Minecraft itself is not available in the automated test environment.
 
 ## Version 1.2.0 changes
 
@@ -152,4 +152,4 @@ Run `node tests/regression.cjs` for the 25 mocked Script API regression tests, i
 - A player can run only one build or undo at a time, protecting the undo snapshot from overlapping operations.
 - Landing searches also work on API versions without `getTopmostBlock`.
 
-Run `node --test tests/regression.cjs` for the mocked Script API regression tests, and `bash build.sh` to rebuild all three installers. These tests do not replace Minecraft testing. Check device activation at full hunger in Creative and Survival on touch and desktop, one-block digging and undo, base building and undo, and biome lookups in each dimension, and teleporting to loaded terrain, unloaded terrain, Nether caves, and End void in a test world.
+Run `node --test tests/regression.cjs` for the mocked Script API regression tests, and `bash build.sh` to rebuild all three installers in `dist/`. These tests do not replace Minecraft testing. Check device activation at full hunger in Creative and Survival on touch and desktop, one-block digging and undo, base building and undo, and biome lookups in each dimension, and teleporting to loaded terrain, unloaded terrain, Nether caves, and End void in a test world.
