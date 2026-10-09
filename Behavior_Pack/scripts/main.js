@@ -1,4 +1,4 @@
-import { world, system, ItemStack } from "@minecraft/server";
+import { world, system, ItemStack, BiomeTypes } from "@minecraft/server";
 import { ActionFormData, ModalFormData, MessageFormData } from "@minecraft/server-ui";
 
 const ITEM_ID = "tools:helper_device";
@@ -1778,8 +1778,8 @@ function openSpawnAndTeleportMenu(player) {
     .button("📍 Set Spawn Point Here\n§7Save your current spot", "textures/items/bed_red")
     .button("🚀 Teleport to Spawn Point\n§7Warp home to your saved spawn", "textures/items/ender_pearl")
     .button("👥 Teleport to Another Player\n§7Warp directly to Dad, Mom, or friends", "textures/items/name_tag")
-    .button("🌎 Find Nearest Biome\n§7Show the coordinates of a biome", "textures/items/compass_item")
-    .button("🏰 Find Nearest Structure\n§7Show how to get a structure's coordinates", "textures/items/map_filled")
+    .button("🌎 Find Nearest Biome\n§7Find a biome and teleport straight there", "textures/items/compass_item")
+    .button("🏰 Find Nearest Structure\n§7Get the command that finds a structure", "textures/items/map_filled")
     .button("🧭 Teleport to Coordinates\n§7Type in X, Y and Z and warp there", "textures/items/paper")
     .button("⬅️ Back to Main Menu\n§7Return to categories", "textures/ui/arrow_left");
 
@@ -1915,13 +1915,15 @@ function getCurrentDimensionName(player) {
 }
 
 /**
- * Finding a place and going there are separate steps. The finders only report
- * coordinates; 🧭 Teleport to Coordinates (or `/scriptevent tools:goto`) is
- * where the player types numbers in and actually moves.
+ * Biomes are looked up from the world seed with
+ * `Dimension.calculateClosestBiomeFromSeed` and the result window can teleport
+ * the player straight there, so nobody has to retype coordinates.
  *
- * Biomes are looked up from the world seed. Structures have no script API at
- * all, so for those the player is given the `/locate` command and Minecraft
- * prints the coordinates in chat.
+ * Structures are different: the stable Script API has no structure search and
+ * `CommandResult` only carries `successCount`, so a scripted `/locate` gives the
+ * script nothing to read. The player is given the `/locate` command for chat and
+ * Minecraft prints the coordinates, which then go into 🧭 Teleport to
+ * Coordinates (or `/scriptevent tools:goto`).
  */
 const WORLD_EDGE = 29999900;
 
@@ -1941,9 +1943,18 @@ const TRAVEL_LOAD_TICKS = 40;
 // The Nether's bedrock roof starts at Y 124, so surface searches begin below it.
 const NETHER_CEILING_SCAN_Y = 120;
 
+/**
+ * Horizontal search box sizes (blocks) tried in order, each in its own tick.
+ * `calculateClosestBiomeFromSeed` is expensive and its default search volume is
+ * undocumented, so the box is always passed explicitly and grows until a biome
+ * turns up. The vertical size always covers the whole dimension so cave biomes
+ * are found no matter where the player is standing.
+ */
+const BIOME_SEARCH_SIZES = [1024, 4096, 8192];
+
 function openBiomeFinderMenu(player) {
   openFinderSelectionMenu(player, BIOME_OPTIONS, "🌎 Nearest Biome",
-    "Pick a biome to see the coordinates of the nearest one.", showNearestBiome);
+    "Pick a biome. Helper Tools finds the nearest one and can teleport you straight there.", showNearestBiome);
 }
 
 function openStructureFinderMenu(player) {
@@ -1961,29 +1972,87 @@ function openFinderSelectionMenu(player, allOptions, title, body, onSelect) {
     if (response.canceled) return;
     if (response.selection === options.length) return openSpawnAndTeleportMenu(player);
     const option = options[response.selection];
-    if (option) onSelect(player, option);
+    if (option) return onSelect(player, option);
   }).catch((e) => console.error(`${title} menu error: ${e}`));
 }
 
-function findNearestBiome(player, biomeId) {
-  const origin = player.location;
-  const found = player.dimension.calculateClosestBiomeFromSeed(origin, biomeId);
-  if (!found || !Number.isFinite(found.x) || !Number.isFinite(found.z)) return null;
-  const x = Math.floor(found.x);
-  const z = Math.floor(found.z);
-  return { x, z, distance: Math.round(Math.hypot(x - origin.x, z - origin.z)) };
+/**
+ * `BiomeTypes.get` wants the namespaced identifier. A `BiomeType` is passed to
+ * the search when the catalogue knows the biome; otherwise the raw identifier
+ * is tried, which the API also accepts.
+ */
+function resolveBiomeType(biomeId) {
+  try {
+    if (typeof BiomeTypes !== "undefined" && BiomeTypes && typeof BiomeTypes.get === "function") {
+      const biomeType = BiomeTypes.get(biomeId);
+      if (biomeType) return biomeType;
+    }
+  } catch (e) {
+    // Fall through to the string identifier.
+  }
+  return biomeId;
 }
 
-function showNearestBiome(player, option) {
+function getBiomeSearchOrigin(player) {
+  const range = getBuildRangeForDimension(player.dimension.id);
+  return { x: player.location.x, y: (range.min + range.max) / 2, z: player.location.z };
+}
+
+function getBiomeSearchOptions(dimensionId, horizontalSize) {
+  const range = getBuildRangeForDimension(dimensionId);
+  return { boundingSize: { x: horizontalSize, y: range.max - range.min + 2, z: horizontalSize } };
+}
+
+function nextTick() {
+  return new Promise((resolve) => system.run(resolve));
+}
+
+/**
+ * Resolves to `{ x, y, z, distance }` of the nearest biome, or null when none
+ * exists within the largest search box. Each search size runs in its own tick
+ * so one slow lookup cannot stall the game for long. Throws if the API itself
+ * fails, so the caller can show the reason.
+ */
+async function findNearestBiome(player, biomeId) {
+  const dimension = player.dimension;
+  const origin = getBiomeSearchOrigin(player);
+  const biome = resolveBiomeType(biomeId);
+  for (let i = 0; i < BIOME_SEARCH_SIZES.length; i++) {
+    if (i > 0) await nextTick();
+    if (!isValidEntity(player)) return null;
+    const found = dimension.calculateClosestBiomeFromSeed(origin, biome, getBiomeSearchOptions(dimension.id, BIOME_SEARCH_SIZES[i]));
+    if (found && Number.isFinite(found.x) && Number.isFinite(found.z)) {
+      const x = Math.floor(found.x);
+      const z = Math.floor(found.z);
+      const y = Number.isFinite(found.y) ? Math.floor(found.y) : undefined;
+      return { x, y, z, distance: Math.round(Math.hypot(x - origin.x, z - origin.z)) };
+    }
+  }
+  return null;
+}
+
+/**
+ * Surface biomes land on the surface. Underground biomes pass the height the
+ * search reported so the landing is looked for around it first.
+ */
+function biomeDestination(option, result) {
+  const destination = { x: result.x, z: result.z };
+  if (option.underground && Number.isFinite(result.y)) destination.y = result.y;
+  return destination;
+}
+
+async function showNearestBiome(player, option) {
+  player.sendMessage(`§e🔎 Searching for the nearest ${option.name}...§r`);
   let result;
   try {
-    result = findNearestBiome(player, option.id);
+    result = await findNearestBiome(player, option.id);
   } catch (err) {
-    player.sendMessage(`§cCould not search for ${option.name}: ${err}§r`);
+    if (isValidEntity(player)) player.sendMessage(`§cCould not search for ${option.name}: ${err}§r`);
     return;
   }
+  if (!isValidEntity(player)) return;
   if (!result) {
-    player.sendMessage(`§eNo ${option.name} could be found from here.§r`);
+    player.sendMessage(`§eNo ${option.name} could be found within ${BIOME_SEARCH_SIZES[BIOME_SEARCH_SIZES.length - 1]} blocks of here.§r`);
     return;
   }
 
@@ -1991,30 +2060,42 @@ function showNearestBiome(player, option) {
   player.sendMessage(`§b🌎 Nearest ${option.name}: §fX ${result.x}, Z ${result.z}§b (about ${result.distance} blocks away)§r`);
   player.playSound("random.orb", { volume: 0.8, pitch: 1.4 });
 
-  const undergroundNote = option.underground ? "\n\nThis biome is underground, so dig down when you get there." : "";
+  const undergroundNote = option.underground ? "\n\nThis biome is underground, so Helper Tools will try to land you inside it." : "";
   new ActionFormData()
     .title(`🌎 ${option.name}`)
     .body(`The nearest ${option.name} is at:\n\n§lX ${result.x}    Z ${result.z}§r\n\nAbout ${result.distance} blocks away. The coordinates are in chat too.${undergroundNote}`)
-    .button("🧭 Teleport to Coordinates\n§7Type these numbers in to go there", "textures/items/paper")
+    .button("🚀 Teleport There Now\n§7Go straight to this biome", "textures/items/ender_pearl")
     .button("🌎 Find Another Biome\n§7Back to the biome list", "textures/items/compass_item")
-    .button("✅ Done\n§7Close this window")
+    .button("✅ Done\n§7Keep the coordinates for later")
     .show(player).then((response) => {
       if (response.canceled) return;
-      if (response.selection === 0) openTeleportToCoordinatesForm(player);
-      else if (response.selection === 1) openBiomeFinderMenu(player);
+      if (response.selection === 0) return teleportToCoordinates(player, biomeDestination(option, result));
+      if (response.selection === 1) openBiomeFinderMenu(player);
     }).catch((e) => console.error("Biome result error: " + e));
 }
 
 /**
  * No form is opened here on purpose: chat is unusable while a form is on
  * screen, and the player needs chat to run the command.
+ *
+ * `/locate` is also run through the script as the player. Command output from
+ * scripts is not returned to the script, so Helper Tools cannot read the
+ * coordinates, but a failure (no such structure in range) does come back as an
+ * error worth showing. Typing `/locate` in chat needs Cheats on and operator
+ * rights, which the script path does not.
  */
 function showStructureLocateCommand(player, option) {
+  const command = `locate structure ${option.id}`;
+  player.setDynamicProperty("last_found_location", `${option.name}: type the numbers from /${command}`);
   player.sendMessage(`§b§l🏰 Where is the nearest ${option.name}?§r`);
-  player.sendMessage(`§eSend this in chat: §a/locate structure ${option.id}§r`);
+  player.sendMessage(`§eSend this in chat: §a/${command}§r`);
   player.sendMessage("§7Minecraft replies with its coordinates, like §fThe nearest ... is at block 1256, (y?), -648§r");
-  player.sendMessage("§7To go there, choose §f🧭 Teleport to Coordinates§7 in the Helper Device and type the numbers in.§r");
+  player.sendMessage("§7Then open the Helper Device, choose §f🧭 Teleport to Coordinates§7 and type the X and Z numbers in. Or send §f/scriptevent tools:goto 1256 -648§7 in chat.§r");
+  player.sendMessage("§7If Minecraft says you do not have permission, turn on Cheats in the world settings first.§r");
   player.playSound("random.orb", { volume: 0.8, pitch: 1.4 });
+  runCommand(player, command).catch((err) => {
+    if (isValidEntity(player)) player.sendMessage(`§eMinecraft could not find a ${option.name} from here: ${err}§r`);
+  });
 }
 
 /**
@@ -2072,7 +2153,7 @@ function coordinatesFromFormText(xText, yText, zText) {
 
 function openTeleportToCoordinatesForm(player) {
   const lastFound = player.getDynamicProperty("last_found_location");
-  const reminder = typeof lastFound === "string" && lastFound.length > 0 ? `§7Last biome found - ${lastFound}§r\n\n` : "";
+  const reminder = typeof lastFound === "string" && lastFound.length > 0 ? `§7Last search - ${lastFound}§r\n\n` : "";
   const form = new ModalFormData()
     .title("🧭 Teleport to Coordinates")
     .textField(`${reminder}X`, "Example: 1256")
