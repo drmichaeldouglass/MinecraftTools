@@ -726,6 +726,7 @@ function openBuilderToolsMenu(player) {
     .button("🚜 Flatten / Level Ground\n§7Level land for building with preview", "textures/items/iron_hoe")
     .button("🪜 Instant Underfoot Platform\n§7Create a platform right under your feet", "textures/blocks/ladder")
     .button("🏠 Starter Base Templates\n§7Houses, fort, tree house, and bunker", "textures/items/bed_red")
+    .button("🏘️ Build a Modern Village\n§7Furnished houses, apartments, cafe, farms, well", "textures/blocks/concrete_white")
     .button("🌉 Bridge & Stair Builder\n§7Build safe paths in the direction you face", "textures/blocks/planks_oak")
     .button("💡 Light Up Area\n§7Place torches on dark surfaces around you", "textures/blocks/torch_on")
     .button("🧹 Area Cleanup\n§7Remove selected clutter around you", "textures/items/bucket_empty")
@@ -751,18 +752,21 @@ function openBuilderToolsMenu(player) {
         openBaseBuilderMenu(player);
         break;
       case 5:
-        openBridgeAndStairMenu(player);
+        openVillageBuilderMenu(player);
         break;
       case 6:
-        lightUpArea(player);
+        openBridgeAndStairMenu(player);
         break;
       case 7:
-        openAreaCleanupMenu(player);
+        lightUpArea(player);
         break;
       case 8:
-        executeUndo(player);
+        openAreaCleanupMenu(player);
         break;
       case 9:
+        executeUndo(player);
+        break;
+      case 10:
         openMainMenu(player);
         break;
     }
@@ -816,6 +820,8 @@ function startPreview(player, bounds, particleName, promptText, onConfirm) {
     system.clearRun(session.intervalId);
     if (isCurrent()) activePreviews.delete(id);
   };
+  // Very large boxes (such as a whole village) are drawn with a wider particle spacing.
+  const previewStep = Math.max(bounds.x2 - bounds.x1, bounds.z2 - bounds.z1) > 32 ? 2 : 1;
   let ticks = 0;
   session.intervalId = system.runInterval(() => {
     ticks += 5;
@@ -828,7 +834,7 @@ function startPreview(player, bounds, particleName, promptText, onConfirm) {
       system.clearRun(session.intervalId);
       return;
     }
-    drawBoxOutline(dimension, bounds, particleName, 1.0);
+    drawBoxOutline(dimension, bounds, particleName, previewStep);
   }, 5);
 
   player.playSound("random.orb", { volume: 0.8, pitch: 1.4 });
@@ -1072,29 +1078,77 @@ function pushShellCommands(commands, context, x1, y1, z1, x2, y2, z2, blockId) {
   commands.push(fillLocal(context, x1, y1, z2, x2, y2, z2, blockId));
 }
 
+// Block tokens may carry Bedrock block states, e.g. `minecraft:bed ["direction"=2]`.
+const BLOCK_STATES_PATTERN = /^\[("[a-z0-9_:]+"=("[a-z0-9_]+"|-?\d+|true|false))(,"[a-z0-9_:]+"=("[a-z0-9_]+"|-?\d+|true|false))*\]$/;
+
+function parseBlockStates(token) {
+  if (!BLOCK_STATES_PATTERN.test(token)) return null;
+  const states = {};
+  for (const entry of token.slice(1, -1).split(",")) {
+    const [key, rawValue] = entry.split("=");
+    states[key.slice(1, -1)] = rawValue.startsWith('"') ? rawValue.slice(1, -1) : rawValue;
+  }
+  return states;
+}
+
+/**
+ * Splits a fill/setblock command into its parts, or returns null when the
+ * command is not a well-formed block command this pack can verify.
+ */
+function parseBlockCommand(command) {
+  const parts = command.split(/\s+/);
+  if (parts[0] !== "fill" && parts[0] !== "setblock") return null;
+  const isFill = parts[0] === "fill";
+  const coords = parts.slice(1, isFill ? 7 : 4).map(Number);
+  if (!coords.every(Number.isInteger)) return null;
+  const [x1, y1, z1] = coords;
+  const [x2, y2, z2] = isFill ? coords.slice(3) : coords;
+  if (x1 > x2 || y1 > y2 || z1 > z2) return null;
+  let index = isFill ? 7 : 4;
+  const blockId = parts[index++];
+  if (!isValidBlockId(blockId)) return null;
+  let states = null;
+  if (index < parts.length && parts[index].startsWith("[")) {
+    states = parseBlockStates(parts[index++]);
+    if (!states) return null;
+  }
+  const mode = index < parts.length ? parts[index++] : "replace";
+  if (!["replace", "hollow", "outline", "keep"].includes(mode)) return null;
+  if (index !== parts.length) return null;
+  return { isFill, x1, y1, z1, x2, y2, z2, blockId, states, mode };
+}
+
+function blockMatches(block, blockId, states) {
+  if (!block || block.typeId !== blockId) return false;
+  if (!states) return true;
+  const permutation = block.permutation;
+  if (!permutation || typeof permutation.getState !== "function") return false;
+  return Object.entries(states).every(([key, value]) => String(permutation.getState(key)) === String(value));
+}
+
 // Commands can fail when their target blocks already have the requested type.
 // Verify the actual result instead of matching localized error text or swallowing
 // failures such as unloaded chunks, invalid block IDs, or height limits.
 function blockCommandIsSatisfied(dimension, command) {
-  const parts = command.split(/\s+/);
-  if (parts[0] !== "fill" && parts[0] !== "setblock") return false;
-  const isFill = parts[0] === "fill";
-  const coords = parts.slice(1, isFill ? 7 : 4).map(Number);
-  if (!coords.every(Number.isInteger)) return false;
-  const [x1, y1, z1] = coords;
-  const [x2, y2, z2] = isFill ? coords.slice(3) : coords;
-  if (x1 > x2 || y1 > y2 || z1 > z2) return false;
-  const blockId = parts[isFill ? 7 : 4];
-  const mode = parts[isFill ? 8 : 5] || "replace";
-  if (!isValidBlockId(blockId) || !["replace", "hollow", "outline"].includes(mode)) return false;
-  if (parts.length > (isFill ? 9 : 6)) return false;
+  const parsed = parseBlockCommand(command);
+  if (!parsed) return false;
+  const { x1, y1, z1, x2, y2, z2, blockId, states, mode } = parsed;
   try {
     for (let x = x1; x <= x2; x++) for (let y = y1; y <= y2; y++) for (let z = z1; z <= z2; z++) {
+      const block = dimension.getBlock({ x, y, z });
+      if (!block) return false;
+      if (mode === "keep") {
+        // `keep` only fills air, so the command is satisfied once no air remains.
+        if (block.isAir || block.typeId === "minecraft:air") return false;
+        continue;
+      }
       const boundary = x === x1 || x === x2 || y === y1 || y === y2 || z === z1 || z === z2;
       if (!boundary && mode === "outline") continue;
-      const expected = !boundary && mode === "hollow" ? "minecraft:air" : blockId;
-      const block = dimension.getBlock({ x, y, z });
-      if (!block || block.typeId !== expected) return false;
+      if (!boundary && mode === "hollow") {
+        if (block.typeId !== "minecraft:air") return false;
+        continue;
+      }
+      if (!blockMatches(block, blockId, states)) return false;
     }
     return true;
   } catch (e) { return false; }
@@ -1108,8 +1162,16 @@ async function runBlockCommand(dimension, command) {
   }
 }
 
-async function runBuildCommands(dimension, commands) {
-  for (const command of commands) await runBlockCommand(dimension, command);
+/**
+ * Runs the commands in order. When `batchSize` is set, the build yields to the
+ * next game tick after every batch so that large plans (such as a whole
+ * village) are spread over several ticks instead of stalling one.
+ */
+async function runBuildCommands(dimension, commands, batchSize = 0) {
+  for (let i = 0; i < commands.length; i++) {
+    if (batchSize > 0 && i > 0 && i % batchSize === 0) await nextTick();
+    await runBlockCommand(dimension, commands[i]);
+  }
 }
 
 function executeBuildPlanUnlocked(player, plan, actionType, successMessage, sound = "dig.stone") {
@@ -1120,7 +1182,7 @@ function executeBuildPlanUnlocked(player, plan, actionType, successMessage, soun
   if (!validateBuildBounds(player, plan.bounds)) return;
   player.sendMessage(`§e🏗️ Building ${plan.name}...§r`);
   return captureUndoSnapshot(player, plan.bounds, actionType).then(async (record) => {
-    await runBuildCommands(getDimensionById(record.dimensionId), plan.commands);
+    await runBuildCommands(getDimensionById(record.dimensionId), plan.commands, plan.batchSize || 0);
   }).then(() => {
     player.sendMessage(`§a${successMessage}§r`);
     player.playSound(sound, { volume: 1.0, pitch: 1.1 });
@@ -1521,6 +1583,624 @@ function createBunkerPlan(player) {
   q.push(setLocal(c, 8, -5, 10, "minecraft:chest"));
   for (const [x, z] of [[3, 7], [7, 7], [3, 11], [7, 11]]) q.push(setLocal(c, x, -1, z, "minecraft:sea_lantern"));
   return makePlan(player, "Underground Bunker", c, q, localBounds(c, 0, -6, 0, 10, 2, 12));
+}
+
+// ==========================================
+// 🏘️ MODERN VILLAGE BUILDER
+// ==========================================
+
+// The village is a 3×3 grid of 17×17 lots separated by 5-wide roads
+// (sidewalk, three lanes of concrete, sidewalk). 17×3 + 5×2 = 61 blocks a
+// side, which stays inside the 64-block limit of `/structure save`, so the
+// whole village can still be undone with a single snapshot.
+const VILLAGE_LOT = 17;
+const VILLAGE_ROAD = 5;
+const VILLAGE_SIZE = VILLAGE_LOT * 3 + VILLAGE_ROAD * 2;
+const VILLAGE_FOUNDATION_DEPTH = 4;
+const VILLAGE_CLEAR_HEIGHT = 17;
+const VILLAGE_BATCH_SIZE = 40;
+const FILL_COMMAND_LIMIT = 32768;
+
+const VILLAGE_PALETTES = [
+  {
+    name: "Crisp White ⚪",
+    wall: "minecraft:white_concrete", accent: "minecraft:light_gray_concrete",
+    trim: "minecraft:stripped_dark_oak_log", plank: "minecraft:dark_oak_planks",
+    floor: "minecraft:smooth_quartz", upperFloor: "minecraft:dark_oak_planks",
+    roof: "minecraft:gray_concrete", slab: "minecraft:smooth_stone_slab",
+    door: "minecraft:dark_oak_door", fence: "minecraft:dark_oak_fence", gate: "minecraft:dark_oak_fence_gate",
+    sofa: "minecraft:quartz_stairs", chair: "minecraft:dark_oak_stairs", carpet: "minecraft:light_gray_carpet",
+    counter: "minecraft:quartz_block", table: "minecraft:dark_oak_slab"
+  },
+  {
+    name: "Charcoal & Oak ⚫",
+    wall: "minecraft:gray_concrete", accent: "minecraft:black_concrete",
+    trim: "minecraft:stripped_oak_log", plank: "minecraft:oak_planks",
+    floor: "minecraft:smooth_stone", upperFloor: "minecraft:oak_planks",
+    roof: "minecraft:black_concrete", slab: "minecraft:smooth_stone_slab",
+    door: "minecraft:dark_oak_door", fence: "minecraft:oak_fence", gate: "minecraft:dark_oak_fence_gate",
+    sofa: "minecraft:quartz_stairs", chair: "minecraft:oak_stairs", carpet: "minecraft:white_carpet",
+    counter: "minecraft:quartz_block", table: "minecraft:oak_slab"
+  },
+  {
+    name: "Sandstone & Spruce 🏖️",
+    wall: "minecraft:sandstone", accent: "minecraft:white_concrete",
+    trim: "minecraft:stripped_spruce_log", plank: "minecraft:spruce_planks",
+    floor: "minecraft:smooth_stone", upperFloor: "minecraft:spruce_planks",
+    roof: "minecraft:light_gray_concrete", slab: "minecraft:smooth_stone_slab",
+    door: "minecraft:dark_oak_door", fence: "minecraft:spruce_fence", gate: "minecraft:dark_oak_fence_gate",
+    sofa: "minecraft:quartz_stairs", chair: "minecraft:spruce_stairs", carpet: "minecraft:white_carpet",
+    counter: "minecraft:quartz_block", table: "minecraft:spruce_slab"
+  }
+];
+
+const VILLAGE_SHARED_BLOCKS = {
+  path: "minecraft:smooth_stone", sidewalk: "minecraft:smooth_stone", road: "minecraft:gray_concrete",
+  roadLine: "minecraft:light_gray_concrete", plaza: "minecraft:smooth_stone", plazaInner: "minecraft:polished_andesite",
+  glass: "minecraft:glass", pane: "minecraft:glass_pane", bars: "minecraft:iron_bars",
+  light: "minecraft:sea_lantern", lantern: "minecraft:lantern", hangingLantern: 'minecraft:lantern ["hanging"=true]',
+  leaves: 'minecraft:oak_leaves ["persistent_bit"=true]', log: "minecraft:oak_log",
+  grass: "minecraft:grass_block", dirt: "minecraft:dirt", air: "minecraft:air", water: "minecraft:water",
+  farmland: 'minecraft:farmland ["moisturized_amount"=7]', hay: "minecraft:hay_block",
+  stoneBricks: "minecraft:stone_bricks", tv: "minecraft:black_concrete", plate: "minecraft:wooden_pressure_plate"
+};
+
+const STAIR_DIRECTION_CODES = { "1,0": 0, "-1,0": 1, "0,1": 2, "0,-1": 3 };
+const BED_DIRECTION_CODES = { "0,1": 0, "-1,0": 1, "0,-1": 2, "1,0": 3 };
+const DOOR_DIRECTION_CODES = { "1,0": 0, "0,1": 1, "-1,0": 2, "0,-1": 3 };
+const CARDINAL_DIRECTION_NAMES = { "1,0": "east", "-1,0": "west", "0,1": "south", "0,-1": "north" };
+
+function withBlockStates(blockId, states) {
+  const entries = Object.entries(states).map(([key, value]) => `"${key}"=${typeof value === "string" ? `"${value}"` : value}`);
+  return `${blockId} [${entries.join(",")}]`;
+}
+
+/** World direction key ("x,z") for a direction given in a build context's local axes. */
+function worldDirectionKey(context, dx, dz) {
+  return `${context.rightX * dx + context.forwardX * dz},${context.rightZ * dx + context.forwardZ * dz}`;
+}
+
+/**
+ * Creates a build context nested inside another one. `ax`/`az` is the parent
+ * local point that becomes the child's origin and `fx`/`fz` is the child's
+ * forward direction expressed in the parent's local axes. Parent contexts are
+ * pure rotations, so the child keeps the same handedness.
+ */
+function createSubContext(parent, ax, az, fx, fz) {
+  const origin = localPoint(parent, ax, 0, az);
+  const rx = fz, rz = -fx;
+  return {
+    baseY: parent.baseY,
+    originX: origin.x, originZ: origin.z,
+    forwardX: parent.rightX * fx + parent.forwardX * fz,
+    forwardZ: parent.rightZ * fx + parent.forwardZ * fz,
+    rightX: parent.rightX * rx + parent.forwardX * rz,
+    rightZ: parent.rightZ * rx + parent.forwardZ * rz
+  };
+}
+
+/**
+ * Context for a building of `width` blocks centred on the front edge of a lot.
+ * `facing` is the lot-local direction from the lot towards its road; the
+ * building's local z axis runs from the road into the lot.
+ */
+function createLotContext(village, col, row, facing, width) {
+  const lx0 = col * (VILLAGE_LOT + VILLAGE_ROAD);
+  const lz0 = row * (VILLAGE_LOT + VILLAGE_ROAD);
+  const half = Math.floor((VILLAGE_LOT - 1) / 2);
+  const frontX = lx0 + half + facing.x * half;
+  const frontZ = lz0 + half + facing.z * half;
+  const fx = -facing.x, fz = -facing.z;
+  const rx = fz, rz = -fx;
+  const widthHalf = Math.floor((width - 1) / 2);
+  return createSubContext(village, frontX - rx * widthHalf, frontZ - rz * widthHalf, fx, fz);
+}
+
+/** Splits a fill into horizontal layers so no single command exceeds the fill limit. */
+function pushLargeFill(q, c, x1, y1, z1, x2, y2, z2, blockId, mode = "") {
+  const area = (Math.abs(x2 - x1) + 1) * (Math.abs(z2 - z1) + 1);
+  const layersPerCommand = Math.max(1, Math.floor(FILL_COMMAND_LIMIT / area));
+  for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y += layersPerCommand) {
+    q.push(fillLocal(c, x1, y, z1, x2, Math.min(y + layersPerCommand - 1, Math.max(y1, y2)), z2, blockId, mode));
+  }
+}
+
+class VillageBuilder {
+  constructor(context, palette, blocks) {
+    this.c = context;
+    this.p = palette;
+    this.b = blocks;
+    this.q = [];
+  }
+  fill(x1, y1, z1, x2, y2, z2, blockId, mode = "") { this.q.push(fillLocal(this.c, x1, y1, z1, x2, y2, z2, blockId, mode)); }
+  set(x, y, z, blockId) { this.q.push(setLocal(this.c, x, y, z, blockId)); }
+  /** Chair or sofa seat facing local direction (dx, dz): the tall side is behind the seat. */
+  seat(x, y, z, dx, dz, blockId = this.p.chair) {
+    const code = STAIR_DIRECTION_CODES[worldDirectionKey(this.c, -dx, -dz)];
+    this.set(x, y, z, withBlockStates(blockId, { weirdo_direction: code, upside_down_bit: false }));
+  }
+  /** Two-block bed with the foot at (x, z) and the head one block towards (dx, dz). */
+  bed(x, y, z, dx, dz) {
+    const code = BED_DIRECTION_CODES[worldDirectionKey(this.c, dx, dz)];
+    this.set(x, y, z, withBlockStates("minecraft:bed", { direction: code, head_piece_bit: false, occupied_bit: false }));
+    this.set(x + dx, y, z + dz, withBlockStates("minecraft:bed", { direction: code, head_piece_bit: true, occupied_bit: false }));
+  }
+  /** Door whose walk-through direction is (dx, dz). */
+  door(x, y, z, dx, dz) {
+    const code = DOOR_DIRECTION_CODES[worldDirectionKey(this.c, dx, dz)];
+    this.set(x, y, z, withBlockStates(this.p.door, { direction: code, door_hinge_bit: false, open_bit: false, upper_block_bit: false }));
+    this.set(x, y + 1, z, withBlockStates(this.p.door, { direction: code, door_hinge_bit: false, open_bit: false, upper_block_bit: true }));
+  }
+  /** Container or furnace whose front faces local direction (dx, dz). */
+  facing(x, y, z, blockId, dx, dz) {
+    this.set(x, y, z, withBlockStates(blockId, { "minecraft:cardinal_direction": CARDINAL_DIRECTION_NAMES[worldDirectionKey(this.c, dx, dz)] }));
+  }
+  table(x, y, z) {
+    this.set(x, y, z, this.p.fence);
+    this.set(x, y + 1, z, this.b.plate);
+  }
+  lampPost(x, z, height = 2) {
+    this.fill(x, 1, z, x, height, z, this.p.fence);
+    this.set(x, height + 1, z, this.b.lantern);
+  }
+  tree(x, z) {
+    this.fill(x - 1, 3, z - 1, x + 1, 4, z + 1, this.b.leaves);
+    this.set(x, 5, z, this.b.leaves);
+    this.fill(x, 1, z, x, 4, z, this.b.log);
+  }
+  /** Hollow room: floor at y0, walls y0+1..y0+height, interior cleared. */
+  room(x1, z1, x2, z2, y0, height, wall, floor) {
+    this.fill(x1, y0, z1, x2, y0, z2, floor);
+    this.fill(x1, y0 + 1, z1, x2, y0 + height, z1, wall);
+    this.fill(x1, y0 + 1, z2, x2, y0 + height, z2, wall);
+    this.fill(x1, y0 + 1, z1, x1, y0 + height, z2, wall);
+    this.fill(x2, y0 + 1, z1, x2, y0 + height, z2, wall);
+    this.fill(x1 + 1, y0 + 1, z1 + 1, x2 - 1, y0 + height, z2 - 1, this.b.air);
+  }
+  /** Flat modern roof with a one-block slab overhang all round. */
+  flatRoof(x1, z1, x2, z2, y) {
+    this.fill(x1 - 1, y, z1 - 1, x2 + 1, y, z2 + 1, this.p.slab);
+    this.fill(x1, y, z1, x2, y, z2, this.p.roof);
+  }
+  kitchenRow(x1, z, y, dx, dz, items) {
+    for (let i = 0; i < items.length; i++) {
+      const x = x1 + i;
+      const item = items[i];
+      if (item === "furnace" || item === "smoker" || item === "chest") this.facing(x, y, z, `minecraft:${item}`, dx, dz);
+      else if (item === "counter") this.set(x, y, z, this.p.counter);
+      else this.set(x, y, z, `minecraft:${item}`);
+    }
+  }
+}
+
+// Each building is drawn in its own lot context: x runs across the frontage,
+// z runs from the road (z = 0, next to the sidewalk) into the lot, y = 0 is
+// street level. Furniture goes in after the walls so it never gets cleared.
+
+function drawBungalow(v) {
+  const { p, b } = v;
+  v.fill(5, 0, 0, 5, 0, 2, b.path);
+  v.fill(0, 1, 0, 3, 1, 0, b.leaves);
+  v.fill(7, 1, 0, 10, 1, 0, b.leaves);
+  v.room(0, 3, 10, 11, 0, 4, p.wall, p.floor);
+  v.fill(7, 1, 3, 10, 4, 3, p.accent);
+  v.fill(0, 1, 3, 0, 4, 3, p.trim);
+  v.fill(10, 1, 3, 10, 4, 3, p.trim);
+  v.fill(1, 2, 3, 3, 3, 3, b.glass);
+  v.fill(8, 2, 3, 9, 3, 3, b.glass);
+  v.fill(0, 2, 5, 0, 3, 9, b.glass);
+  v.fill(10, 2, 5, 10, 3, 9, b.glass);
+  v.fill(2, 2, 11, 8, 3, 11, b.glass);
+  v.door(5, 1, 3, 0, 1);
+  v.fill(6, 1, 4, 6, 4, 7, p.plank);
+  v.fill(6, 2, 6, 6, 2, 7, b.tv);
+  v.fill(2, 1, 6, 4, 1, 8, p.carpet);
+  for (let z = 6; z <= 8; z++) v.seat(1, 1, z, 1, 0, p.sofa);
+  v.set(3, 1, 7, p.table);
+  v.kitchenRow(1, 10, 1, 0, -1, ["barrel", "furnace", "counter", "crafting_table", "counter"]);
+  v.set(5, 2, 10, "minecraft:flower_pot");
+  v.bed(8, 1, 9, 0, 1);
+  v.facing(9, 1, 10, "minecraft:chest", 0, -1);
+  v.fill(9, 1, 4, 9, 2, 4, "minecraft:bookshelf");
+  v.flatRoof(0, 3, 10, 11, 5);
+  v.set(3, 5, 7, b.light);
+  v.set(8, 5, 7, b.light);
+}
+
+function drawCarportHouse(v) {
+  const { p, b } = v;
+  v.fill(4, 0, 0, 4, 0, 2, b.path);
+  v.fill(10, 0, 0, 14, 0, 9, b.road);
+  v.fill(0, 1, 0, 2, 1, 0, b.leaves);
+  v.room(0, 3, 8, 11, 0, 4, p.accent, p.floor);
+  v.fill(0, 1, 3, 3, 4, 3, p.wall);
+  v.fill(0, 1, 11, 8, 4, 11, p.wall);
+  v.fill(1, 2, 3, 2, 3, 3, b.glass);
+  v.fill(6, 2, 3, 7, 3, 3, b.glass);
+  v.fill(0, 2, 5, 0, 3, 9, b.glass);
+  v.fill(2, 2, 11, 6, 3, 11, b.glass);
+  v.door(4, 1, 3, 0, 1);
+  v.fill(2, 1, 5, 5, 1, 8, p.carpet);
+  for (let z = 6; z <= 7; z++) v.seat(1, 1, z, 1, 0, p.sofa);
+  v.set(3, 1, 6, p.table);
+  v.fill(7, 2, 6, 7, 2, 7, b.tv);
+  v.kitchenRow(1, 10, 1, 0, -1, ["furnace", "smoker", "crafting_table", "barrel"]);
+  v.bed(6, 1, 9, 0, 1);
+  v.facing(7, 1, 10, "minecraft:chest", 0, -1);
+  v.set(5, 1, 10, "minecraft:bookshelf");
+  v.flatRoof(0, 3, 8, 11, 5);
+  v.set(2, 5, 7, b.light);
+  v.set(6, 5, 7, b.light);
+  for (const z of [3, 9]) for (const x of [10, 14]) v.fill(x, 1, z, x, 4, z, p.trim);
+  v.fill(9, 5, 2, 15, 5, 10, p.roof);
+  v.set(12, 4, 6, b.hangingLantern);
+}
+
+function drawStudioCabin(v) {
+  const { p, b } = v;
+  v.fill(3, 0, 0, 3, 0, 2, b.path);
+  v.fill(0, 1, 0, 1, 1, 0, b.leaves);
+  v.fill(5, 1, 0, 6, 1, 0, b.leaves);
+  v.room(0, 3, 6, 9, 0, 3, p.plank, p.floor);
+  v.fill(0, 1, 3, 0, 3, 3, p.trim);
+  v.fill(6, 1, 3, 6, 3, 3, p.trim);
+  v.fill(1, 1, 3, 2, 3, 3, b.glass);
+  v.fill(4, 1, 3, 5, 3, 3, b.glass);
+  v.fill(0, 2, 5, 0, 2, 7, b.glass);
+  v.fill(6, 2, 5, 6, 2, 7, b.glass);
+  v.door(3, 1, 3, 0, 1);
+  v.bed(1, 1, 7, 0, 1);
+  v.facing(2, 1, 8, "minecraft:chest", 0, -1);
+  v.kitchenRow(4, 8, 1, 0, -1, ["furnace", "crafting_table"]);
+  v.fill(5, 1, 5, 5, 2, 5, "minecraft:bookshelf");
+  v.set(5, 1, 4, "minecraft:lectern");
+  v.fill(2, 1, 5, 4, 1, 6, p.carpet);
+  v.seat(4, 1, 7, -1, 0);
+  v.flatRoof(0, 3, 6, 9, 4);
+  v.set(3, 4, 6, b.light);
+}
+
+function drawFamilyHome(v) {
+  const { p, b } = v;
+  v.fill(5, 0, 0, 5, 0, 2, b.path);
+  v.fill(0, 1, 0, 3, 1, 0, b.leaves);
+  v.fill(7, 1, 0, 10, 1, 0, b.leaves);
+  v.room(0, 3, 10, 12, 0, 9, p.wall, p.floor);
+  v.fill(0, 6, 3, 10, 9, 3, p.accent);
+  v.fill(1, 5, 4, 9, 5, 11, p.upperFloor);
+  for (const y of [2, 7]) {
+    v.fill(1, y, 3, 3, y + 1, 3, b.glass);
+    v.fill(7, y, 3, 9, y + 1, 3, b.glass);
+    v.fill(0, y, 6, 0, y + 1, 10, b.glass);
+    v.fill(10, y, 6, 10, y + 1, 10, b.glass);
+    v.fill(2, y, 12, 8, y + 1, 12, b.glass);
+  }
+  v.door(5, 1, 3, 0, 1);
+  for (let step = 0; step < 4; step++) {
+    v.fill(8, 1 + step, 5 + step, 9, 1 + step, 5 + step, p.plank);
+    v.fill(8, 2 + step, 5 + step, 9, 3 + step, 5 + step, b.air);
+  }
+  v.fill(8, 5, 5, 9, 5, 8, b.air);
+  v.fill(7, 6, 5, 7, 6, 8, p.fence);
+  v.kitchenRow(1, 11, 1, 0, -1, ["barrel", "furnace", "counter", "smoker", "crafting_table", "counter"]);
+  v.set(6, 2, 11, "minecraft:flower_pot");
+  v.table(3, 1, 8);
+  v.seat(2, 1, 8, 1, 0);
+  v.seat(4, 1, 8, -1, 0);
+  v.fill(1, 1, 5, 4, 1, 6, p.carpet);
+  for (let x = 1; x <= 2; x++) v.seat(x, 1, 4, 0, 1, p.sofa);
+  v.fill(1, 1, 9, 1, 2, 9, "minecraft:bookshelf");
+  v.set(3, 4, 7, b.hangingLantern);
+  v.set(6, 4, 9, b.hangingLantern);
+  v.fill(5, 6, 4, 5, 9, 7, p.plank);
+  v.bed(2, 6, 5, 0, -1);
+  v.facing(1, 6, 4, "minecraft:chest", 0, 1);
+  v.set(3, 6, 4, "minecraft:bookshelf");
+  v.fill(1, 6, 7, 4, 6, 8, p.carpet);
+  v.bed(8, 6, 10, 0, 1);
+  v.facing(9, 6, 11, "minecraft:chest", 0, -1);
+  v.set(1, 6, 11, "minecraft:cauldron");
+  v.set(2, 6, 11, p.counter);
+  v.set(6, 6, 11, "minecraft:bookshelf");
+  v.fill(6, 6, 9, 7, 6, 10, p.carpet);
+  v.flatRoof(0, 3, 10, 12, 10);
+  v.set(3, 10, 7, b.light);
+  v.set(7, 10, 10, b.light);
+}
+
+function drawApartmentBlock(v) {
+  const { p, b } = v;
+  v.fill(5, 0, 0, 7, 0, 2, b.path);
+  v.fill(0, 1, 0, 3, 1, 0, b.leaves);
+  v.fill(9, 1, 0, 12, 1, 0, b.leaves);
+  v.room(0, 3, 12, 15, 0, 14, p.wall, p.floor);
+  v.fill(0, 1, 3, 0, 14, 3, p.trim);
+  v.fill(12, 1, 3, 12, 14, 3, p.trim);
+  const levels = [0, 5, 10];
+  for (const level of levels) {
+    if (level > 0) v.fill(1, level, 4, 11, level, 14, p.upperFloor);
+    v.fill(2, level + 2, 3, 4, level + 3, 3, b.glass);
+    v.fill(8, level + 2, 3, 10, level + 3, 3, b.glass);
+    v.fill(0, level + 2, 6, 0, level + 3, 8, b.glass);
+    v.fill(0, level + 2, 11, 0, level + 3, 13, b.glass);
+    v.fill(12, level + 2, 6, 12, level + 3, 8, b.glass);
+    v.fill(12, level + 2, 11, 12, level + 3, 13, b.glass);
+    v.fill(2, level + 2, 15, 10, level + 3, 15, b.glass);
+    if (level > 0) {
+      v.fill(1, level, 1, 5, level, 2, p.upperFloor);
+      v.fill(1, level + 1, 1, 5, level + 1, 1, b.bars);
+      v.set(1, level + 1, 2, b.bars);
+      v.set(5, level + 1, 2, b.bars);
+      v.door(3, level + 1, 3, 0, 1);
+    }
+  }
+  v.door(6, 1, 3, 0, 1);
+  for (let flight = 0; flight < 2; flight++) {
+    const z0 = 5 + flight * 4;
+    const y0 = 1 + flight * 5;
+    for (let step = 0; step < 4; step++) {
+      v.fill(10, y0 + step, z0 + step, 11, y0 + step, z0 + step, p.plank);
+      v.fill(10, y0 + step + 1, z0 + step, 11, y0 + step + 2, z0 + step, b.air);
+    }
+    v.fill(10, y0 + 4, z0, 11, y0 + 4, z0 + 3, b.air);
+    v.fill(9, y0 + 5, z0, 9, y0 + 5, z0 + 3, p.fence);
+  }
+  v.flatRoof(0, 3, 12, 15, 15);
+  v.fill(0, 16, 3, 12, 16, 3, p.slab);
+  v.fill(0, 16, 15, 12, 16, 15, p.slab);
+  v.fill(0, 16, 3, 0, 16, 15, p.slab);
+  v.fill(12, 16, 3, 12, 16, 15, p.slab);
+  // Furnish every storey once all floors and the roof exist, so nothing is overwritten.
+  for (const level of levels) {
+    v.fill(4, level + 1, 8, 4, level + 4, 11, p.plank);
+    v.fill(4, level + 2, 9, 4, level + 2, 10, b.tv);
+    for (let x = 1; x <= 2; x++) v.seat(x, level + 1, 6, 0, 1, p.sofa);
+    v.fill(1, level + 1, 7, 3, level + 1, 9, p.carpet);
+    v.set(2, level + 1, 8, p.table);
+    v.kitchenRow(5, 14, level + 1, 0, -1, ["barrel", "furnace", "counter", "crafting_table"]);
+    v.bed(1, level + 1, 13, 0, 1);
+    v.facing(2, level + 1, 14, "minecraft:chest", 0, -1);
+    v.fill(9, level + 1, 14, 9, level + 2, 14, "minecraft:bookshelf");
+    v.set(3, level + 5, 8, b.light);
+    v.set(7, level + 5, 12, b.light);
+  }
+}
+
+function drawCafe(v) {
+  const { p, b } = v;
+  v.fill(4, 0, 0, 8, 0, 2, b.path);
+  for (const x of [1, 11]) {
+    v.table(x, 1, 1);
+    v.seat(x - 1, 1, 1, 1, 0);
+    v.seat(x + 1, 1, 1, -1, 0);
+  }
+  v.room(0, 3, 12, 13, 0, 9, p.wall, p.floor);
+  v.fill(0, 6, 3, 12, 9, 3, p.accent);
+  v.fill(1, 5, 4, 11, 5, 12, p.upperFloor);
+  v.fill(1, 1, 3, 5, 3, 3, b.glass);
+  v.fill(7, 1, 3, 11, 3, 3, b.glass);
+  v.fill(0, 4, 2, 12, 4, 2, p.slab);
+  v.fill(2, 7, 3, 4, 8, 3, b.glass);
+  v.fill(8, 7, 3, 10, 8, 3, b.glass);
+  for (const y of [2, 7]) {
+    v.fill(0, y, 6, 0, y + 1, 10, b.glass);
+    v.fill(12, y, 6, 12, y + 1, 10, b.glass);
+    v.fill(3, y, 13, 9, y + 1, 13, b.glass);
+  }
+  v.door(6, 1, 3, 0, 1);
+  v.kitchenRow(3, 11, 1, 0, -1, ["barrel", "smoker", "counter", "counter", "counter", "counter", "furnace"]);
+  v.set(7, 2, 11, "minecraft:cake");
+  v.set(5, 2, 11, "minecraft:flower_pot");
+  v.fill(3, 1, 12, 9, 2, 12, "minecraft:bookshelf");
+  for (const [x, z] of [[3, 6], [3, 10], [7, 8]]) {
+    v.table(x, 1, z);
+    v.seat(x - 1, 1, z, 1, 0);
+    v.seat(x + 1, 1, z, -1, 0);
+  }
+  for (let step = 0; step < 4; step++) {
+    v.fill(10, 1 + step, 5 + step, 11, 1 + step, 5 + step, p.plank);
+    v.fill(10, 2 + step, 5 + step, 11, 3 + step, 5 + step, b.air);
+  }
+  v.fill(10, 5, 5, 11, 5, 8, b.air);
+  v.fill(9, 6, 5, 9, 6, 8, p.fence);
+  v.set(3, 4, 6, b.hangingLantern);
+  v.set(7, 4, 8, b.hangingLantern);
+  v.set(3, 4, 10, b.hangingLantern);
+  v.bed(2, 6, 11, 0, 1);
+  v.facing(1, 6, 12, "minecraft:chest", 0, -1);
+  for (let x = 2; x <= 3; x++) v.seat(x, 6, 5, 0, 1, p.sofa);
+  v.fill(1, 6, 6, 4, 6, 8, p.carpet);
+  v.set(2, 6, 7, p.table);
+  v.kitchenRow(5, 12, 6, 0, -1, ["furnace", "counter", "crafting_table", "barrel"]);
+  v.fill(8, 6, 11, 8, 7, 11, "minecraft:bookshelf");
+  v.flatRoof(0, 3, 12, 13, 10);
+  v.set(3, 10, 8, b.light);
+  v.set(8, 10, 8, b.light);
+}
+
+function drawCropFarm(v) {
+  const { p, b } = v;
+  v.fill(0, 1, 0, 16, 1, 0, p.fence);
+  v.fill(0, 1, 16, 16, 1, 16, p.fence);
+  v.fill(0, 1, 0, 0, 1, 16, p.fence);
+  v.fill(16, 1, 0, 16, 1, 16, p.fence);
+  v.set(8, 1, 0, p.gate);
+  v.fill(8, 0, 1, 8, 0, 10, b.path);
+  const crops = [
+    [1, 7, withBlockStates("minecraft:wheat", { growth: 7 }), withBlockStates("minecraft:carrots", { growth: 7 })],
+    [9, 15, withBlockStates("minecraft:potatoes", { growth: 7 }), withBlockStates("minecraft:beetroot", { growth: 7 })]
+  ];
+  for (const [x1, x2, cropA, cropB] of crops) {
+    v.fill(x1, 0, 2, x2, 0, 8, b.farmland);
+    v.fill(x1, 0, 5, x2, 0, 5, b.water);
+    v.fill(x1, 1, 2, x2, 1, 4, cropA);
+    v.fill(x1, 1, 6, x2, 1, 8, cropB);
+  }
+  v.room(5, 11, 11, 15, 0, 3, p.plank, p.floor);
+  v.door(8, 1, 11, 0, 1);
+  v.fill(6, 2, 15, 10, 2, 15, b.pane);
+  v.fill(6, 1, 14, 7, 1, 14, b.hay);
+  v.facing(10, 1, 14, "minecraft:chest", 0, -1);
+  v.set(10, 1, 12, "minecraft:composter");
+  v.set(10, 1, 13, "minecraft:crafting_table");
+  v.set(6, 1, 12, "minecraft:barrel");
+  v.flatRoof(5, 11, 11, 15, 4);
+  v.set(8, 3, 13, b.hangingLantern);
+  v.fill(2, 1, 12, 2, 1, 13, b.hay);
+  v.set(2, 2, 12, b.hay);
+  v.set(14, 1, 12, "minecraft:composter");
+  v.tree(14, 14);
+  v.lampPost(1, 1);
+  v.lampPost(15, 1);
+}
+
+function drawOrchardFarm(v) {
+  const { p, b } = v;
+  v.fill(0, 1, 0, 16, 1, 0, p.fence);
+  v.fill(0, 1, 16, 16, 1, 16, p.fence);
+  v.fill(0, 1, 0, 0, 1, 16, p.fence);
+  v.fill(16, 1, 0, 16, 1, 16, p.fence);
+  v.set(8, 1, 0, p.gate);
+  v.fill(8, 0, 1, 8, 0, 15, b.path);
+  // Glasshouse with two rows of beds and a central channel.
+  v.room(1, 2, 7, 10, 0, 3, b.glass, p.floor);
+  for (const [x, z] of [[1, 2], [7, 2], [1, 10], [7, 10]]) v.fill(x, 1, z, x, 3, z, p.trim);
+  v.fill(1, 4, 2, 7, 4, 10, b.glass);
+  v.door(4, 1, 2, 0, 1);
+  v.fill(2, 0, 3, 6, 0, 9, b.farmland);
+  v.fill(4, 0, 3, 4, 0, 9, b.water);
+  v.fill(2, 1, 3, 3, 1, 9, withBlockStates("minecraft:carrots", { growth: 7 }));
+  v.fill(5, 1, 3, 6, 1, 9, withBlockStates("minecraft:beetroot", { growth: 7 }));
+  v.set(4, 3, 6, b.hangingLantern);
+  // Orchard rows.
+  for (const z of [4, 8, 12]) for (const x of [10, 14]) v.tree(x, z);
+  // Open-sided storage barn.
+  for (const [x, z] of [[1, 12], [7, 12], [1, 15], [7, 15]]) v.fill(x, 1, z, x, 3, z, p.trim);
+  v.fill(1, 4, 12, 7, 4, 15, p.roof);
+  v.fill(2, 0, 12, 6, 0, 15, p.floor);
+  v.fill(2, 1, 14, 3, 1, 15, b.hay);
+  v.set(2, 2, 15, b.hay);
+  v.facing(6, 1, 15, "minecraft:chest", 0, -1);
+  v.set(5, 1, 15, "minecraft:barrel");
+  v.set(6, 1, 13, "minecraft:composter");
+  v.set(3, 1, 12, "minecraft:cauldron");
+  v.set(4, 3, 13, b.hangingLantern);
+  v.lampPost(1, 1);
+  v.lampPost(15, 1);
+}
+
+function drawPlaza(v) {
+  const { p, b } = v;
+  v.fill(0, 0, 0, 16, 0, 16, b.plaza);
+  v.fill(2, 0, 2, 14, 0, 14, b.plazaInner);
+  v.fill(6, 0, 6, 10, 0, 10, b.plaza);
+  // Well: a stone-brick basin with a lantern under a small roof.
+  v.fill(6, -1, 6, 10, -1, 10, b.stoneBricks);
+  v.fill(7, 0, 7, 9, 0, 9, b.water);
+  v.fill(6, 1, 6, 10, 1, 10, b.stoneBricks);
+  v.fill(7, 1, 7, 9, 1, 9, b.air);
+  for (const [x, z] of [[6, 6], [10, 6], [6, 10], [10, 10]]) v.fill(x, 2, z, x, 3, z, p.fence);
+  v.fill(5, 4, 5, 11, 4, 11, p.slab);
+  v.fill(6, 4, 6, 10, 4, 10, p.plank);
+  v.set(8, 3, 8, b.hangingLantern);
+  // Benches around the well.
+  for (let n = 7; n <= 9; n++) {
+    v.seat(n, 1, 4, 0, 1);
+    v.seat(n, 1, 12, 0, -1);
+    v.seat(4, 1, n, 1, 0);
+    v.seat(12, 1, n, -1, 0);
+  }
+  for (const [x, z] of [[2, 2], [14, 2], [2, 14], [14, 14]]) v.tree(x, z);
+  for (const [x, z] of [[4, 4], [12, 4], [4, 12], [12, 12]]) v.lampPost(x, z);
+  v.fill(8, 1, 2, 8, 2, 2, p.trim);
+  v.set(8, 3, 2, "minecraft:bell");
+}
+
+function drawVillageRoads(village, q, b, palette) {
+  const strips = [];
+  for (const start of [VILLAGE_LOT, VILLAGE_LOT * 2 + VILLAGE_ROAD]) strips.push(start);
+  const end = VILLAGE_SIZE - 1;
+  for (const s of strips) {
+    const centre = s + 2;
+    // Road running along z (sidewalk, lanes, sidewalk) and the matching one along x.
+    q.push(fillLocal(village, s, 0, 0, s, 0, end, b.sidewalk));
+    q.push(fillLocal(village, s + 4, 0, 0, s + 4, 0, end, b.sidewalk));
+    q.push(fillLocal(village, s + 1, 0, 0, s + 3, 0, end, b.road));
+    q.push(fillLocal(village, 0, 0, s, end, 0, s, b.sidewalk));
+    q.push(fillLocal(village, 0, 0, s + 4, end, 0, s + 4, b.sidewalk));
+    q.push(fillLocal(village, 0, 0, s + 1, end, 0, s + 3, b.road));
+    for (let n = 1; n < end; n += 4) {
+      q.push(fillLocal(village, centre, 0, n, centre, 0, Math.min(n + 1, end), b.roadLine));
+      q.push(fillLocal(village, n, 0, centre, Math.min(n + 1, end), 0, centre, b.roadLine));
+    }
+  }
+  // Street lamps on the sidewalks.
+  const lampFence = palette.fence;
+  for (const s of strips) for (const edge of [s, s + 4]) for (const n of [8, 30, 52]) {
+    q.push(fillLocal(village, edge, 1, n, edge, 2, n, lampFence));
+    q.push(setLocal(village, edge, 3, n, b.lantern));
+    q.push(fillLocal(village, n, 1, edge, n, 2, edge, lampFence));
+    q.push(setLocal(village, n, 3, edge, b.lantern));
+  }
+}
+
+const VILLAGE_LOTS = [
+  { col: 0, row: 0, facing: { x: 0, z: 1 }, width: 11, draw: drawBungalow },
+  { col: 1, row: 0, facing: { x: 0, z: 1 }, width: 13, draw: drawApartmentBlock },
+  { col: 2, row: 0, facing: { x: 0, z: 1 }, width: 15, draw: drawCarportHouse },
+  { col: 0, row: 1, facing: { x: 1, z: 0 }, width: 17, draw: drawCropFarm },
+  { col: 1, row: 1, facing: { x: 0, z: 1 }, width: 17, draw: drawPlaza },
+  { col: 2, row: 1, facing: { x: -1, z: 0 }, width: 17, draw: drawOrchardFarm },
+  { col: 0, row: 2, facing: { x: 0, z: -1 }, width: 13, draw: drawCafe },
+  { col: 1, row: 2, facing: { x: 0, z: -1 }, width: 11, draw: drawFamilyHome },
+  { col: 2, row: 2, facing: { x: 0, z: -1 }, width: 7, draw: drawStudioCabin }
+];
+
+function createVillagePlan(player, paletteIndex = 0, prepareGround = true) {
+  const palette = VILLAGE_PALETTES[paletteIndex] || VILLAGE_PALETTES[0];
+  const b = VILLAGE_SHARED_BLOCKS;
+  const c = createOrientedBuildContext(player, VILLAGE_SIZE, VILLAGE_SIZE, -1);
+  const end = VILLAGE_SIZE - 1;
+  const q = [];
+  if (prepareGround) {
+    pushLargeFill(q, c, 0, 1, 0, end, VILLAGE_CLEAR_HEIGHT, end, b.air);
+    pushLargeFill(q, c, 0, -VILLAGE_FOUNDATION_DEPTH, 0, end, -1, end, b.dirt, "keep");
+    pushLargeFill(q, c, 0, 0, 0, end, 0, end, b.grass);
+  }
+  drawVillageRoads(c, q, b, palette);
+  for (const lot of VILLAGE_LOTS) {
+    const builder = new VillageBuilder(createLotContext(c, lot.col, lot.row, lot.facing, lot.width), palette, b);
+    lot.draw(builder);
+    q.push(...builder.q);
+  }
+  const plan = makePlan(player, "Modern Village", c, q,
+    localBounds(c, 0, -VILLAGE_FOUNDATION_DEPTH, 0, end, VILLAGE_CLEAR_HEIGHT, end));
+  plan.batchSize = VILLAGE_BATCH_SIZE;
+  plan.palette = palette.name;
+  return plan;
+}
+
+function openVillageBuilderMenu(player) {
+  const form = new ModalFormData()
+    .title("🏘️ Build a Modern Village")
+    .dropdown("Colour scheme:", VILLAGE_PALETTES.map((palette) => palette.name), { defaultValueIndex: 0 })
+    .toggle("Flatten and prepare the ground first (recommended)", { defaultValue: true })
+    .toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const [paletteIndex, prepareGround, showGuide] = response.formValues;
+    const plan = createVillagePlan(player, Number(paletteIndex), Boolean(prepareGround));
+    if (!validateBuildBounds(player, plan.bounds)) return;
+    const confirm = () => {
+      player.sendMessage("§eThe village is built over a few seconds. Please stay in this dimension.§r");
+      executeBuildPlan(player, plan, "village", "🏘️ Modern village completed! Four houses, apartments, a cafe, two farms and a well await.", "dig.wood");
+    };
+    const prompt = `Build a ${VILLAGE_SIZE}×${VILLAGE_SIZE} modern village (${plan.palette}) here?\n\n` +
+      "It has four furnished houses, a three-storey apartment block, a cafe with a flat, two farms, and a plaza with a well. " +
+      (prepareGround ? "The ground inside the box is flattened first." : "The ground is left as it is, so pick flat land.");
+    if (showGuide) startPreview(player, plan.bounds, "minecraft:villager_happy", prompt, confirm);
+    else confirm();
+  }).catch((e) => console.error("Village builder menu error: " + e));
 }
 
 function openBridgeAndStairMenu(player) {
