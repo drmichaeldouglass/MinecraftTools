@@ -33,7 +33,8 @@ function harness() {
     id: 'player1', dimension, location: { x: 0, y: 64, z: 0 }, isValid: () => true,
     getViewDirection: () => ({ x: 0, y: 0, z: 1 }), messages: [], teleports: [],
     sendMessage(m) { this.messages.push(m); }, playSound() {}, addEffect() {},
-    teleport(loc, options) { this.teleports.push({ loc, options }); }
+    teleport(loc, options) { this.teleports.push({ loc, options }); },
+    runCommand(command) { this.commands.push(command); return { successCount: 1 }; }, commands: []
   };
   async function tick() {
     await new Promise(resolve => setImmediate(resolve));
@@ -189,34 +190,85 @@ test('teleport form reads X, optional Y and Z boxes', () => {
   assert.equal(ctx.coordinatesFromFormText('10', '', ''), null);
 });
 
-test('biome finder shows coordinates without teleporting', () => {
-  const { ctx, player, dimension } = harness();
+test('biome finder searches the whole dimension height and offers a direct teleport', async () => {
+  const { ctx, player, dimension, tick } = harness();
   const searches = [];
   const properties = {};
-  dimension.calculateClosestBiomeFromSeed = (pos, id) => { searches.push(id); return { x: 300.7, y: 64, z: -400.2 }; };
+  dimension.calculateClosestBiomeFromSeed = (pos, id, options) => { searches.push({ pos, id, options }); return { x: 300.7, y: 64, z: -400.2 }; };
   player.setDynamicProperty = (k, v) => { properties[k] = v; };
-  let body;
+  let body, buttons = [];
   ctx.ActionFormData = class {
-    title() { return this; } button() { return this; }
+    title() { return this; } button(label) { buttons.push(label); return this; }
     body(text) { body = text; return this; }
     show() { return new Promise(() => {}); }
   };
   ctx.showNearestBiome(player, { name: 'Plains', id: 'minecraft:plains' });
-  assert.deepEqual(searches, ['minecraft:plains']);
+  await tick();
+  assert.equal(searches.length, 1);
+  assert.equal(searches[0].id, 'minecraft:plains');
+  assert.equal(searches[0].options.boundingSize.x, 1024);
+  assert.ok(searches[0].options.boundingSize.y >= 384, 'vertical search covers the overworld height');
+  assert.equal(searches[0].pos.y, (319 - 64) / 2);
   assert.match(body, /X 300 +Z -401/);
+  assert.ok(buttons[0].includes('Teleport There Now'));
   assert.ok(player.messages.some(m => m.includes('X 300, Z -401') && m.includes('501 blocks')));
   assert.equal(properties.last_found_location, 'Plains: X 300, Z -401');
   assert.equal(player.teleports.length, 0);
 });
 
-test('biome finder reports when nothing is found', () => {
-  const { ctx, player, dimension } = harness();
-  dimension.calculateClosestBiomeFromSeed = () => undefined;
+test('biome result window teleports straight to the found coordinates', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  dimension.calculateClosestBiomeFromSeed = () => ({ x: 300.7, y: -20, z: -400.2 });
+  player.setDynamicProperty = () => {};
+  let destination;
+  ctx.teleportToCoordinates = (p, coords) => { destination = coords; };
+  ctx.ActionFormData = class {
+    title() { return this; } button() { return this; } body() { return this; }
+    show() { return Promise.resolve({ canceled: false, selection: 0 }); }
+  };
   ctx.showNearestBiome(player, { name: 'Plains', id: 'minecraft:plains' });
-  assert.ok(player.messages.some(m => m.includes('No Plains')));
+  await tick();
+  assert.equal(JSON.stringify(destination), JSON.stringify({ x: 300, z: -401 }));
+  ctx.showNearestBiome(player, { name: 'Lush Caves', id: 'minecraft:lush_caves', underground: true });
+  await tick();
+  assert.equal(JSON.stringify(destination), JSON.stringify({ x: 300, z: -401, y: -20 }));
+});
+
+test('biome finder widens the search before giving up', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  const sizes = [];
+  dimension.calculateClosestBiomeFromSeed = (pos, id, options) => { sizes.push(options.boundingSize.x); return undefined; };
+  ctx.showNearestBiome(player, { name: 'Plains', id: 'minecraft:plains' });
+  for (let i = 0; i < 5; i++) await tick();
+  assert.deepEqual(sizes, [1024, 4096, 8192]);
+  assert.ok(player.messages.some(m => m.includes('No Plains') && m.includes('8192')));
   assert.equal(player.teleports.length, 0);
 });
 
+test('biome finder reports API errors instead of failing silently', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  dimension.calculateClosestBiomeFromSeed = () => { throw new Error('boom'); };
+  ctx.showNearestBiome(player, { name: 'Plains', id: 'minecraft:plains' });
+  await tick();
+  assert.ok(player.messages.some(m => m.includes('Could not search for Plains') && m.includes('boom')));
+});
+
+test('structure finder gives the locate command and runs it as the player', async () => {
+  const { ctx, player, tick } = harness();
+  const properties = {};
+  player.setDynamicProperty = (k, v) => { properties[k] = v; };
+  ctx.showStructureLocateCommand(player, { name: 'Village', id: 'minecraft:village' });
+  await tick();
+  assert.deepEqual(player.commands, ['locate structure minecraft:village']);
+  assert.ok(player.messages.some(m => m.includes('/locate structure minecraft:village')));
+  assert.ok(player.messages.some(m => m.includes('Cheats')));
+  assert.ok(properties.last_found_location.startsWith('Village:'));
+  assert.equal(player.teleports.length, 0);
+  player.runCommand = () => { throw new Error('No structure found'); };
+  ctx.showStructureLocateCommand(player, { name: 'Village', id: 'minecraft:village' });
+  await tick();
+  assert.ok(player.messages.some(m => m.includes('could not find a Village') && m.includes('No structure found')));
+});
 
 test('coordinate boxes reject malformed values instead of extracting unrelated digits', () => {
   const { ctx } = harness();

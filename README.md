@@ -1,6 +1,6 @@
 # 🪄 Minecraft Bedrock Helper Tools Add-On
 
-Requires Minecraft Bedrock **1.26.30 or newer** (Script API 2.9).
+Requires Minecraft Bedrock **1.26.40 or newer** (Script API 2.9).
 
 A complete, feature-rich Minecraft Bedrock Add-On created to give players an easy-to-use **Helper Device** (Magic Wand). When held and activated, it brings up a colorful, intuitive graphical menu packed with safety helpers, 3D holographic builder tools, superpowers, pet summoners, and multiplayer fast-travel!
 
@@ -54,18 +54,16 @@ A complete, feature-rich Minecraft Bedrock Add-On created to give players an eas
 * 📍 **Set Spawn Point Here**: Saves the player's current spot as their spawn point.
 * 🚀 **Teleport to Spawn Point**: Instantly warps back to the saved spawn point from anywhere in the world.
 * 👥 **Teleport to Another Player**: Lists online players (Dad, Mom, or friends) and teleports directly to them with one tap!
-* 🌎 **Find Nearest Biome**: Choose any biome that exists in the dimension you are standing in (Overworld, Nether, or The End). Helper Tools shows the X and Z coordinates of the nearest one and how far away it is, and also posts them in chat. It does not move you.
-* 🏰 **Find Nearest Structure**: Choose a village, trial chamber, fortress, End city, ancient city, and more. Helper Tools gives you the `/locate` command to send in chat, and Minecraft replies with the coordinates.
+* 🌎 **Find Nearest Biome**: Choose any biome that exists in the dimension you are standing in (Overworld, Nether, or The End). Helper Tools finds the nearest one, shows its X and Z coordinates and distance, and the result window has a **🚀 Teleport There Now** button that takes you straight there. No retyping needed.
+* 🏰 **Find Nearest Structure**: Choose a village, trial chamber, fortress, End city, ancient city, and more. Helper Tools gives you the `/locate` command to send in chat, and Minecraft replies with the coordinates. Typing `/locate` in chat needs Cheats turned on in the world settings.
 * 🧭 **Teleport to Coordinates**: Type in X, Y and Z and warp there. Y is optional; leave it empty to land on the surface.
 
 #### Finding a place and going there
 
-Finding and teleporting are separate on purpose, so you always see where a place is before deciding to go.
+* **Biomes**: the add-on looks the biome up from the world seed (`Dimension.calculateClosestBiomeFromSeed`), searching a 1024, then 4096, then 8192 block wide box across the full height of the dimension, and shows the coordinates in a window. Press **🚀 Teleport There Now** to go straight there; underground biomes such as Lush Caves and Deep Dark land you near the depth where the biome was found. Because the search uses the seed, the answer describes how the world was generated, so terrain you have changed since may look different.
+* **Structures**: the stable Script API has no structure search, and commands run from scripts return only a success count, so Helper Tools cannot read where a structure is. It closes the menu and prints the exact command, for example `/locate structure minecraft:village`. Minecraft answers with something like `The nearest village is at block 1256, (y?), -648`. The command needs Cheats on in the world settings and operator rights; the add-on also runs it on your behalf so that Minecraft reports when no such structure is in range.
 
-* **Biomes**: the add-on looks the biome up from the world seed and shows its coordinates in a window. Because the search uses the seed, the answer describes how the world was generated, so terrain you have changed since may look different.
-* **Structures**: no Script API can search for structures, so Helper Tools closes the menu and prints the exact command, for example `/locate structure minecraft:village`. Minecraft answers with something like `The nearest village is at block 1256, (y?), -648`.
-
-To go somewhere, open **📍 Spawn & Teleport** ➔ **🧭 Teleport to Coordinates** and type the numbers in. The window reminds you of the last biome you found. You can also paste a whole `The nearest ...` line into the X box and it picks the numbers out. Prefer chat? `/scriptevent tools:goto 1256 -648` (or `/scriptevent tools:goto 1256 70 -648` with a height) does the same thing.
+To go to a structure, open **📍 Spawn & Teleport** ➔ **🧭 Teleport to Coordinates** and type the numbers in. The window reminds you of the last place you searched for. You can also paste a whole `The nearest ...` line into the X box and it picks the numbers out. Prefer chat? `/scriptevent tools:goto 1256 -648` (or `/scriptevent tools:goto 1256 70 -648` with a height) does the same thing.
 
 Helper Tools loads the destination first, finds solid ground with headroom (never lava, never the Nether's bedrock roof, and never buried inside rock), and puts you down there in one hop with Resistance and Fire Resistance for the landing. If there is nowhere safe to stand, you stay where you are.
 
@@ -127,6 +125,16 @@ When creating a new world (or editing an existing world):
 3. If you ever lose the device:
    - Open any Helper Device you still have and tap **🎁 Get Extra Helper Device**, or
    - Type `/scriptevent tools:device` in chat and a new one is added to your inventory.
+
+## Version 1.2.2 changes
+
+- 🌎 Find Nearest Biome can now teleport you straight to the biome it found with a **🚀 Teleport There Now** button, instead of making you retype the coordinates. Underground biomes land you near the biome's depth.
+- The biome search always passes an explicit search box (1024, then 4096, then 8192 blocks wide, full dimension height), each step in its own game tick, and reports API errors in chat instead of failing silently.
+- 🏰 Find Nearest Structure explains that `/locate` needs Cheats on, keeps the structure name in the Teleport to Coordinates window, and also runs the command for you so Minecraft can report when nothing is in range. Reading a structure's coordinates from a script is still not possible on the stable Script API.
+- The minimum engine version is now 1.26.40, the first release where `@minecraft/server` 2.9.0 (and its biome search) is available without the Beta APIs experiment.
+- Both packs and all three installers are updated to version 1.2.2 so Minecraft can recognize the update.
+
+Run `node tests/regression.cjs` for the 28 mocked Script API regression tests. Minecraft itself is not available in the automated test environment, so check the biome teleport in each dimension (including Lush Caves and Deep Dark) and the structure instructions in a disposable world first.
 
 ## Version 1.2.1 fixes and verification
 
