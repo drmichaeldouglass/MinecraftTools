@@ -42,6 +42,7 @@ A complete, feature-rich Minecraft Bedrock Add-On created to give players an eas
 * 🚜 **Flatten / Level Ground**: Clears trees, bumps, and hills in a 5–20 block radius around the player and places a clean floor (Grass, Stone, Dirt, Wood Planks, etc.) ready for building.
 * 🪜 **Instant Underfoot Platform**: Spawns a 3x3 to 9x9 safety platform (Glass, Wood, Smooth Stone, Glowstone, Obsidian) right beneath feet.
 * 🏠 **Starter Base Templates**: Builds a furnished Simple House, Large Two-Storey House, Stone Fort, raised Tree House, or Underground Bunker in the direction the player faces.
+* 🏘️ **Build a Modern Village**: Builds a whole 61×61 modern village in front of you: four furnished houses (a flat-roof bungalow, a two-storey family home, a house with a carport, and a glass-fronted studio cabin), a three-storey apartment block with balconies, a corner cafe with a flat upstairs, a crop farm with a shed, an orchard farm with a glasshouse, and a central plaza with a well, benches, trees and a bell, all joined by lit concrete roads with sidewalks. Every home has beds, a kitchen, seating, storage and lights. Pick one of three colour schemes, and leave **Flatten and prepare the ground first** on unless the land is already flat. The village builds over a couple of seconds and can be reverted with **↩️ Undo Last Build**.
 * 🌉 **Bridge Builder**: Creates configurable 3–50 block bridges with selectable materials and optional safety railings.
 * 🪜 **Stair Builder**: Builds one-to-five-block-wide staircases upward or downward, with optional automatic headroom clearing.
 * 🧹 **Area Cleanup**: Safely removes selected dropped items, XP orbs, projectiles, vehicles, or hostile mobs within a 10–100 block radius. Players, pets, villagers, and friendly mobs are protected.
@@ -125,6 +126,15 @@ When creating a new world (or editing an existing world):
 3. If you ever lose the device:
    - Open any Helper Device you still have and tap **🎁 Get Extra Helper Device**, or
    - Type `/scriptevent tools:device` in chat and a new one is added to your inventory.
+
+## Version 1.3.0 changes
+
+- 🏘️ New **Build a Modern Village** tool under 🏗️ Builder Tools. It places a 61×61 village in front of you with four furnished houses of different designs, a three-storey apartment block, a cafe with a flat above, two farms, a plaza with a well, and lit roads. Choose a colour scheme (Crisp White, Charcoal & Oak, or Sandstone & Spruce), optionally flatten the ground first, and confirm from the 3D preview. The whole village fits in one undo snapshot, so **↩️ Undo Last Build** removes it again.
+- Large builds now run in batches of commands across several game ticks instead of all at once, so the game stays responsive while the village is placed. Fills larger than the command limit are split automatically.
+- Build commands can now carry Bedrock block states (for beds, doors, stairs, crops, lanterns and the like) and use the `keep` fill mode. The no-op check that lets a build continue over blocks that are already correct understands both, so a village can be rebuilt on top of itself.
+- Both packs and all three installers are updated to version 1.3.0 so Minecraft can recognize the update.
+
+Run `node tests/regression.cjs` for the 33 mocked Script API regression tests, which include building and undoing the village in all four facings and checking that every command stays inside the undo snapshot and the fill limit. Minecraft itself is not available in the automated test environment, so build the village in a disposable world first and check the furniture orientation (beds, doors, chairs) and that the farm crops and lanterns look right.
 
 ## Version 1.2.2 changes
 

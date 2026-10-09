@@ -41,7 +41,8 @@ function harness() {
     for (const fn of callbacks.splice(0)) fn();
     await new Promise(resolve => setImmediate(resolve));
   }
-  return { ctx, player, dimension, callbacks, tick, intervals, clearedIntervals };
+  const evaluate = expression => vm.runInContext(expression, ctx);
+  return { ctx, player, dimension, callbacks, tick, intervals, clearedIntervals, evaluate };
 }
 
 test('dig depth starts below the feet for all facings', () => {
@@ -342,9 +343,12 @@ test('preview confirmation remains usable after its drawing expires', async () =
 
 function blockWorld(dimension) {
   const blocks = new Map();
+  const states = new Map();
   dimension.getBlock = ({x,y,z}) => {
-    const typeId = blocks.get(`${x},${y},${z}`) || (y < 64 ? 'minecraft:stone' : 'minecraft:air');
-    return { typeId, isAir:typeId === 'minecraft:air' };
+    const key = `${x},${y},${z}`;
+    const typeId = blocks.get(key) || (y < 64 ? 'minecraft:stone' : 'minecraft:air');
+    const blockStates = states.get(key) || {};
+    return { typeId, isAir:typeId === 'minecraft:air', permutation:{ getState: name => blockStates[name] } };
   };
   dimension.runCommand = command => {
     const p = command.split(/\s+/);
@@ -352,16 +356,25 @@ function blockWorld(dimension) {
     const fill = p[0] === 'fill';
     const [x1,y1,z1] = p.slice(1,4).map(Number);
     const [x2,y2,z2] = fill ? p.slice(4,7).map(Number) : [x1,y1,z1];
-    const typeId = p[fill ? 7 : 4];
+    let index = fill ? 7 : 4;
+    const typeId = p[index++];
+    let blockStates = {};
+    if (p[index] && p[index].startsWith('[')) blockStates = JSON.parse('{' + p[index++].slice(1,-1).replace(/=/g, ':') + '}');
+    const mode = p[index] || 'replace';
     let changed = 0;
     for(let x=x1;x<=x2;x++) for(let y=y1;y<=y2;y++) for(let z=z1;z<=z2;z++) {
-      if(dimension.getBlock({x,y,z}).typeId !== typeId) {
-        blocks.set(`${x},${y},${z}`,typeId); changed++;
+      const key = `${x},${y},${z}`;
+      const current = dimension.getBlock({x,y,z});
+      if (mode === 'keep' && !current.isAir) continue;
+      const sameStates = JSON.stringify(states.get(key) || {}) === JSON.stringify(blockStates);
+      if(current.typeId !== typeId || !sameStates) {
+        blocks.set(key,typeId); states.set(key, blockStates); changed++;
       }
     }
     if (!changed) throw new Error('No blocks changed');
     return { successCount:changed };
   };
+  return { blocks, states };
 }
 
 test('all base templates and staircases finish despite already-empty air and duplicate placements', async () => {
@@ -436,4 +449,107 @@ test('no-op checks respect hollow interiors, outline shells and unavailable bloc
   dimension.getBlock = () => undefined;
   assert.equal(ctx.blockCommandIsSatisfied(dimension,'fill 0 64 0 2 66 2 minecraft:air'),false);
   assert.equal(ctx.blockCommandIsSatisfied(dimension,'fill 2 66 2 0 64 0 minecraft:air'),false);
+});
+
+async function settle(promise, tick) {
+  let done = false;
+  promise.then(() => { done = true; }, () => { done = true; });
+  for (let i = 0; i < 1000 && !done; i++) await tick();
+  return promise;
+}
+
+test('block commands with states and keep mode are parsed and verified', () => {
+  const { ctx, dimension } = harness();
+  const parsed = ctx.parseBlockCommand('setblock 1 64 2 minecraft:bed ["direction"=2,"head_piece_bit"=true]');
+  assert.equal(parsed.blockId, 'minecraft:bed');
+  assert.equal(JSON.stringify(parsed.states), JSON.stringify({ direction:'2', head_piece_bit:'true' }));
+  assert.equal(parsed.mode, 'replace');
+  assert.equal(ctx.parseBlockCommand('fill 0 64 0 2 64 2 minecraft:dirt keep').mode, 'keep');
+  assert.equal(ctx.parseBlockCommand('fill 0 64 0 2 64 2 minecraft:dirt ["bad state"] keep'), null);
+  assert.equal(ctx.parseBlockCommand('setblock 1 64 2 minecraft:bed ["direction"=2] replace extra'), null);
+  blockWorld(dimension);
+  dimension.runCommand('setblock 1 64 2 minecraft:bed ["direction"=2,"head_piece_bit"=true]');
+  assert.equal(ctx.blockCommandIsSatisfied(dimension,'setblock 1 64 2 minecraft:bed ["direction"=2,"head_piece_bit"=true]'), true);
+  assert.equal(ctx.blockCommandIsSatisfied(dimension,'setblock 1 64 2 minecraft:bed ["direction"=0,"head_piece_bit"=true]'), false);
+  assert.equal(ctx.blockCommandIsSatisfied(dimension,'fill 0 60 0 2 63 2 minecraft:dirt keep'), true);
+  assert.equal(ctx.blockCommandIsSatisfied(dimension,'fill 0 60 0 2 64 2 minecraft:dirt keep'), false);
+  assert.equal(ctx.blockCommandIsSatisfied(dimension,'fill 0 63 0 2 63 2 minecraft:stone'), true);
+});
+
+test('village fits a single undo snapshot and every command stays inside its bounds and the fill limit', () => {
+  const { ctx, player, evaluate } = harness();
+  const size = evaluate('VILLAGE_SIZE');
+  const paletteCount = evaluate('VILLAGE_PALETTES.length');
+  assert.ok(size <= 64, 'structure save allows at most 64 blocks a side');
+  for (const facing of [{x:1,z:0},{x:-1,z:0},{x:0,z:1},{x:0,z:-1}]) {
+    player.getViewDirection = () => facing;
+    for (let palette = 0; palette < paletteCount; palette++) {
+      const plan = ctx.createVillagePlan(player, palette, true);
+      const b = plan.bounds;
+      assert.ok(b.x2 - b.x1 + 1 <= 64 && b.z2 - b.z1 + 1 <= 64 && b.y2 - b.y1 + 1 <= 384);
+      assert.ok(plan.commands.length > 500, 'village has many commands');
+      for (const command of plan.commands) {
+        const c = ctx.parseBlockCommand(command);
+        assert.ok(c, `unparseable command: ${command}`);
+        assert.ok(c.x1 >= b.x1 && c.x2 <= b.x2 && c.y1 >= b.y1 && c.y2 <= b.y2 && c.z1 >= b.z1 && c.z2 <= b.z2, `outside bounds: ${command}`);
+        assert.ok((c.x2-c.x1+1)*(c.y2-c.y1+1)*(c.z2-c.z1+1) <= 32768, `too large: ${command}`);
+      }
+    }
+  }
+  const footprint = ctx.createVillagePlan(player, 0, true).bounds;
+  assert.equal(footprint.x2 - footprint.x1 + 1, size);
+  assert.equal(footprint.z2 - footprint.z1 + 1, size);
+});
+
+test('village builds and undoes in all four facings, spreading commands over several ticks', async () => {
+  for (const facing of [{x:1,z:0},{x:-1,z:0},{x:0,z:1},{x:0,z:-1}]) {
+    const { ctx, player, dimension, tick, callbacks, evaluate } = harness();
+    player.getViewDirection = () => facing;
+    const { blocks } = blockWorld(dimension);
+    const batchSize = evaluate('VILLAGE_BATCH_SIZE');
+    const plan = ctx.createVillagePlan(player, 0, true);
+    let yields = 0;
+    const originalRun = ctx.system.run;
+    ctx.system.run = fn => { yields++; callbacks.push(fn); };
+    await settle(ctx.executeBuildPlan(player, plan, 'village', 'Village done'), tick);
+    ctx.system.run = originalRun;
+    assert.ok(player.messages.some(m => m.includes('Village done')), player.messages.join('\n'));
+    assert.ok(!player.messages.some(m => m.includes('command failed')));
+    assert.ok(yields >= Math.floor(plan.commands.length / batchSize) - 1, 'build yields between batches');
+    const placed = new Set(blocks.values());
+    for (const needed of ['minecraft:bed', 'minecraft:dark_oak_door', 'minecraft:wheat', 'minecraft:water', 'minecraft:sea_lantern', 'minecraft:gray_concrete', 'minecraft:bell']) {
+      assert.ok(placed.has(needed), `${needed} placed`);
+    }
+    const first = ctx.parseBlockCommand(plan.commands[0]);
+    assert.equal(first.blockId, 'minecraft:air');
+    await ctx.executeUndo(player);
+    assert.ok(player.messages.some(m => m.includes('Undid')));
+  }
+});
+
+test('village without ground preparation leaves the terrain alone and still undoes', async () => {
+  const { ctx, player, dimension, tick, evaluate } = harness();
+  blockWorld(dimension);
+  const size = evaluate('VILLAGE_SIZE');
+  const prepared = ctx.createVillagePlan(player, 1, true);
+  const coversVillage = c => { const b = ctx.parseBlockCommand(c); return b.x2 - b.x1 + 1 === size && b.z2 - b.z1 + 1 === size; };
+  assert.ok(prepared.commands.some(c => c.endsWith(' keep')));
+  assert.ok(prepared.commands.some(c => c.endsWith('minecraft:air') && coversVillage(c)));
+  const plan = ctx.createVillagePlan(player, 1, false);
+  assert.ok(!plan.commands.some(c => c.endsWith(' keep')));
+  assert.ok(!plan.commands.some(coversVillage));
+  await settle(ctx.executeBuildPlan(player, plan, 'village', 'Village done'), tick);
+  assert.ok(player.messages.some(m => m.includes('Village done')));
+  await ctx.executeUndo(player);
+  assert.ok(player.messages.some(m => m.includes('Undid')));
+});
+
+test('a village can be rebuilt on top of itself without stopping on already-placed blocks', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  blockWorld(dimension);
+  for (let i = 0; i < 2; i++) {
+    player.messages.length = 0;
+    await settle(ctx.executeBuildPlan(player, ctx.createVillagePlan(player, 2, true), 'village', 'Village done'), tick);
+    assert.ok(player.messages.some(m => m.includes('Village done')), `build ${i}: ` + player.messages.join('\n'));
+  }
 });
