@@ -17,7 +17,7 @@ The Helper Device menu has six sections.
 | 🎮 **Game Modes & Time** | Day, night, clear weather, Creative and Survival mode |
 | 🛡️ **Life Savers & Rescue** | Heal and feed, clear nearby monsters, cave rescue, fire shield, cure effects |
 | ⚡ **Superpowers & Flying** | Night vision, super speed and jump, Elytra with rockets |
-| 🏗️ **Builder Tools** | Dig, fill, flatten, platforms, houses, a whole village, shapes and beacons, swimming pools, draining water and lava, bridges, stairs, torches, cleanup, undo |
+| 🏗️ **Builder Tools** | Dig, fill, flatten, platforms, houses, a whole village, shapes and beacons, swimming pools, draining water and lava, redstone contraptions, bridges, stairs, torches, cleanup, undo |
 | 📍 **Spawn & Teleport** | Set and return to spawn, teleport to players, find biomes and structures, go to coordinates |
 | 🐾 **Pets & Companions** | Tame dog, cat, parrot, saddled horse, iron golem, axolotl |
 
@@ -53,6 +53,7 @@ Builds are placed in front of you, in the direction you are facing.
 | 🔷 **Shapes & Beacons** | Sphere, dome, stepped pyramid, cylinder or tower (height 1 gives a disc or ring) and cone, solid or hollow, in any block from the list or a typed block ID. Radius up to 25, pyramid base up to 61. Plus a working beacon on a 1 to 4 level pyramid of iron, gold, emerald, diamond, netherite or a rainbow mix, with an optional coloured beam and the sky above cleared. |
 | 🏊 **Swimming Pool** | Pool 1 to 25 blocks wide and long, 1 to 6 deep, sunk into the ground with the water level with the surface. Six tile colours, five deck materials (or none), underwater sea lanterns and a diving board. |
 | 🌊 **Drain Water & Lava** | Removes water, lava or both within 3 to 25 blocks of you. Undoable. |
+| ⚡ **Redstone Contraptions** | Six working machines: an Automatic Door (iron door opened by pressure plates or buttons), a Bubble Elevator (soul sand water lift up a glass tower, 3 to 60 blocks, with an optional magma shaft down), a Firework Launcher (1 to 9 dispensers loaded with rockets, fired by one button), an Auto Sugar Cane Farm (observers and pistons harvest into a chest, 2 to 8 rows), Night Lamps (lamp posts around you that switch on at dusk) and a Powered Railway (5 to 60 blocks of powered track plus a minecart) |
 | 🌉 **Bridge & Stair Builder** | Bridges 3 to 50 blocks long with optional railings; staircases up or down, 1, 3 or 5 blocks wide, with optional headroom clearing |
 | 💡 **Light Up Area** | Places torches in a grid on the ground around you so monsters can't spawn |
 | 🧹 **Area Cleanup** | Removes dropped items, XP orbs, arrows, boats and minecarts or hostile mobs within 10 to 100 blocks. Players, pets, villagers and friendly mobs are protected. |
@@ -141,7 +142,7 @@ Pick a section, then a tool. Every sub-menu has a **⬅️ Back** button.
 5. Made a mistake? Use **↩️ Undo Last Build/Hole**.
 
 About undo:
-- It remembers **one** build per player: your most recent dig, fill, flatten, platform, base, house, village, shape, beacon, pool, drain, bridge or staircase. A new build replaces the saved one.
+- It remembers **one** build per player: your most recent dig, fill, flatten, platform, base, house, village, shape, beacon, pool, drain, contraption, bridge or staircase. A new build replaces the saved one.
 - The undo is kept in memory, so it is lost when the world is closed.
 - Torches from **Light Up Area** and things removed by **Area Cleanup** can't be undone.
 
@@ -150,6 +151,8 @@ For the **Modern Village**, find a reasonably open area, leave **Flatten and pre
 Shapes rest on the ground at your feet and start one block in front of you, so stand back from where you want the middle to be. Large hollow spheres and cones are placed over a few seconds. A **Beacon** only shines when nothing solid is straight above it, so leave **Clear the sky** on unless you are already outdoors. After it is built, tap the beacon block to pick its power.
 
 The **Swimming Pool** is dug into the ground in front of you, so stand on flat land at the level you want the deck. **Drain Water & Lava** clears a cube around you; water from outside the cube can flow back in, so drain a little wider than the pond you want gone.
+
+**Redstone Contraptions** are placed in front of you like other builds. For the Bubble Elevator, open the door at the bottom, step in and float up; at the top, walk out onto the landing behind the tower, and use the magma shaft (if you added one) to come down, stepping out of its door quickly because magma is hot. The Firework Launcher fires when you press the button on the end of the row. The Sugar Cane Farm harvests by itself; collect from the chest at the right-hand end of the water channel. The Railway comes with a minecart: place it on the first rail, climb in and push forward.
 
 ### Finding biomes
 Open **📍 Spawn & Teleport** ➔ **🌎 Find Nearest Biome**, pick a biome, and press **🚀 Teleport There Now** in the result window. Choose **✅ Done** instead to just keep the coordinates. The search uses the world seed, so places you have changed may look different from how they were generated. Underground biomes such as Lush Caves and Deep Dark land you near the depth where the biome was found.

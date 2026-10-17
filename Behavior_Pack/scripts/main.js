@@ -731,6 +731,7 @@ function openBuilderToolsMenu(player) {
     .button("🔷 Shapes & Beacons\n§7Spheres, domes, pyramids, towers, cones, beacons", "textures/items/diamond")
     .button("🏊 Swimming Pool\n§7Tiled pool with deck, lights and diving board", "textures/items/bucket_water")
     .button("🌊 Drain Water & Lava\n§7Remove liquids around you (undoable)", "textures/items/bucket_empty")
+    .button("⚡ Redstone Contraptions\n§7Auto door, elevator, fireworks, farm, lamps, railway", "textures/items/redstone_dust")
     .button("🌉 Bridge & Stair Builder\n§7Build safe paths in the direction you face", "textures/blocks/planks_oak")
     .button("💡 Light Up Area\n§7Place torches on dark surfaces around you", "textures/blocks/torch_on")
     .button("🧹 Area Cleanup\n§7Remove selected clutter around you", "textures/items/bucket_empty")
@@ -771,18 +772,21 @@ function openBuilderToolsMenu(player) {
         openDrainLiquidMenu(player);
         break;
       case 10:
-        openBridgeAndStairMenu(player);
+        openContraptionMenu(player);
         break;
       case 11:
-        lightUpArea(player);
+        openBridgeAndStairMenu(player);
         break;
       case 12:
-        openAreaCleanupMenu(player);
+        lightUpArea(player);
         break;
       case 13:
-        executeUndo(player);
+        openAreaCleanupMenu(player);
         break;
       case 14:
+        executeUndo(player);
+        break;
+      case 15:
         openMainMenu(player);
         break;
     }
@@ -1269,9 +1273,11 @@ function executeBuildPlanUnlocked(player, plan, actionType, successMessage, soun
   }).then(() => {
     player.sendMessage(`§a${successMessage}§r`);
     player.playSound(sound, { volume: 1.0, pitch: 1.1 });
+    return true;
   }).catch((err) => {
     player.sendMessage(`§cBuild stopped because a command failed: ${err}§r`);
     player.sendMessage("§eUse Undo Last Build to restore the area.§r");
+    return false;
   });
 }
 
@@ -1736,8 +1742,11 @@ const VILLAGE_SHARED_BLOCKS = {
 const STAIR_DIRECTION_CODES = { "1,0": 0, "-1,0": 1, "0,1": 2, "0,-1": 3 };
 const BED_DIRECTION_CODES = { "0,1": 0, "-1,0": 1, "0,-1": 2, "1,0": 3 };
 const DOOR_DIRECTION_CODES = { "1,0": 0, "0,1": 1, "-1,0": 2, "0,-1": 3 };
-// `facing_direction` of a ladder is the way it faces, away from the wall it hangs on.
-const LADDER_DIRECTION_CODES = { "0,-1": 2, "0,1": 3, "-1,0": 4, "1,0": 5 };
+// Integer `facing_direction` used by ladders, pistons, dispensers, hoppers and
+// buttons: 0 down, 1 up, then north, south, west, east. A ladder faces away
+// from the wall it hangs on; a piston or dispenser faces where it pushes or shoots.
+const FACING_DIRECTION_CODES = { "0,-1": 2, "0,1": 3, "-1,0": 4, "1,0": 5 };
+const FACING_DOWN = 0, FACING_UP = 1;
 const CARDINAL_DIRECTION_NAMES = { "1,0": "east", "-1,0": "west", "0,1": "south", "0,-1": "north" };
 
 function withBlockStates(blockId, states) {
@@ -1826,7 +1835,7 @@ class VillageBuilder {
   }
   /** Ladder from y1 up to y2 at (x, z), facing local (dx, dz) away from the wall it hangs on. */
   ladder(x, y1, z, y2, dx, dz) {
-    const code = LADDER_DIRECTION_CODES[worldDirectionKey(this.c, dx, dz)];
+    const code = FACING_DIRECTION_CODES[worldDirectionKey(this.c, dx, dz)];
     this.fill(x, y1, z, x, y2, z, withBlockStates("minecraft:ladder", { facing_direction: code }));
   }
   /** Container or furnace whose front faces local direction (dx, dz). */
@@ -3070,6 +3079,337 @@ function openDrainLiquidMenu(player) {
     if (showGuide) startPreview(player, plan.bounds, "minecraft:wax_particle", prompt, confirm);
     else confirm();
   }).catch((e) => console.error("Drain menu error: " + e));
+}
+
+// ==========================================
+// ⚡ REDSTONE CONTRAPTIONS
+// ==========================================
+
+const CONTRAPTION_BATCH_SIZE = 40;
+const CONTRAPTION_BASE = "minecraft:smooth_stone";
+
+const DOOR_FRAME_BLOCKS = [
+  { name: "Stone Bricks 🏛️", id: "minecraft:stone_bricks" },
+  { name: "Oak Planks 🪵", id: "minecraft:oak_planks" },
+  { name: "Quartz Block ⚪", id: "minecraft:quartz_block" },
+  { name: "Deepslate Bricks ⬛", id: "minecraft:deepslate_bricks" },
+  { name: "Sandstone 🏖️", id: "minecraft:sandstone" }
+];
+
+function facingCode(context, dx, dz) {
+  return FACING_DIRECTION_CODES[worldDirectionKey(context, dx, dz)];
+}
+
+function facingName(context, dx, dz) {
+  return CARDINAL_DIRECTION_NAMES[worldDirectionKey(context, dx, dz)];
+}
+
+/** Gives an item to the player, dropping it at their feet when the inventory is full. */
+function giveItemToPlayer(player, typeId, amount) {
+  try {
+    const inventory = player.getComponent("inventory");
+    const container = inventory && inventory.container;
+    const item = new ItemStack(typeId, amount);
+    const leftover = container ? container.addItem(item) : item;
+    if (leftover) player.dimension.spawnItem(leftover, { x: player.location.x, y: player.location.y + 0.5, z: player.location.z });
+    return true;
+  } catch (e) {
+    player.sendMessage(`§eCould not give ${typeId}: ${e}§r`);
+    return false;
+  }
+}
+
+/** Iron door in a wall with pressure plates or buttons on both sides. */
+function createAutoDoorPlan(player, frameId, trigger) {
+  const c = createOrientedBuildContext(player, 5, 3, -1);
+  const q = [];
+  q.push(fillLocal(c, 0, 1, 0, 4, 5, 2, "minecraft:air"));
+  q.push(fillLocal(c, 0, 0, 0, 4, 0, 2, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, 1, 1, 4, 4, 1, frameId));
+  q.push(fillLocal(c, 2, 1, 1, 2, 2, 1, "minecraft:air"));
+  pushDoorCommands(q, c, 2, 1, 1, 0, 1, "minecraft:iron_door");
+  if (trigger === "buttons") {
+    q.push(setLocal(c, 1, 2, 0, withBlockStates("minecraft:stone_button", { facing_direction: facingCode(c, 0, -1), button_pressed_bit: false })));
+    q.push(setLocal(c, 3, 2, 2, withBlockStates("minecraft:stone_button", { facing_direction: facingCode(c, 0, 1), button_pressed_bit: false })));
+  } else {
+    q.push(setLocal(c, 2, 1, 0, "minecraft:stone_pressure_plate"));
+    q.push(setLocal(c, 2, 1, 2, "minecraft:stone_pressure_plate"));
+  }
+  q.push(setLocal(c, 1, 5, 1, "minecraft:lantern"));
+  q.push(setLocal(c, 3, 5, 1, "minecraft:lantern"));
+  const plan = makePlan(player, "Automatic Door", c, q, localBounds(c, 0, 0, 0, 4, 5, 2));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  return plan;
+}
+
+/**
+ * Soul sand bubble elevator in a glass tower, with an optional magma shaft to
+ * come back down. Doors at the bottom keep the water in; the top opens onto a
+ * railed landing behind the tower.
+ */
+function createBubbleElevatorPlan(player, height, withDown) {
+  height = clampNumber(Math.round(height), 3, 60);
+  const width = withDown ? 5 : 3;
+  const c = createOrientedBuildContext(player, width, 3, -1);
+  const q = [];
+  const top = height + 3;
+  pushLargeFill(q, c, 0, 1, 0, width - 1, top, 2, "minecraft:air");
+  q.push(fillLocal(c, 0, height + 1, 3, width - 1, top, 4, "minecraft:air"));
+  q.push(fillLocal(c, 0, 0, 0, width - 1, 0, 2, CONTRAPTION_BASE));
+  pushLargeFill(q, c, 0, 1, 0, width - 1, height + 2, 2, "minecraft:glass");
+  const shafts = [{ x: 1, floor: "minecraft:soul_sand" }];
+  if (withDown) shafts.push({ x: 3, floor: "minecraft:magma" });
+  for (const shaft of shafts) {
+    q.push(setLocal(c, shaft.x, 0, 1, shaft.floor));
+    pushLargeFill(q, c, shaft.x, 1, 1, shaft.x, height, 1, "minecraft:water");
+    q.push(fillLocal(c, shaft.x, height + 1, 1, shaft.x, height + 2, 1, "minecraft:air"));
+    q.push(fillLocal(c, shaft.x, height + 1, 2, shaft.x, height + 2, 2, "minecraft:air"));
+    pushDoorCommands(q, c, shaft.x, 1, 0, 0, 1, "minecraft:wooden_door");
+  }
+  q.push(fillLocal(c, 0, height, 3, width - 1, height, 4, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, height + 1, 4, width - 1, height + 1, 4, "minecraft:oak_fence"));
+  q.push(setLocal(c, 0, height + 1, 3, "minecraft:oak_fence"));
+  q.push(setLocal(c, width - 1, height + 1, 3, "minecraft:oak_fence"));
+  q.push(setLocal(c, 1, height, 4, "minecraft:sea_lantern"));
+  q.push(setLocal(c, 1, 0, 0, "minecraft:sea_lantern"));
+  const plan = makePlan(player, "Bubble Elevator", c, q, localBounds(c, 0, 0, 0, width - 1, top, 4));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  plan.height = height;
+  return plan;
+}
+
+/** Row of upward dispensers full of rockets, fired together by one button. */
+function createFireworkLauncherPlan(player, count) {
+  count = clampNumber(Math.round(count), 1, 9);
+  const c = createOrientedBuildContext(player, count + 1, 4, -1);
+  const q = [];
+  q.push(fillLocal(c, 0, 1, 0, count, 4, 3, "minecraft:air"));
+  q.push(fillLocal(c, 0, 0, 0, count, 0, 3, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, 1, 3, count, 1, 3, CONTRAPTION_BASE));
+  for (let x = 0; x < count; x++) {
+    q.push(setLocal(c, x, 1, 2, withBlockStates("minecraft:dispenser", { facing_direction: FACING_UP, triggered_bit: false })));
+    q.push(setLocal(c, x, 2, 3, "minecraft:redstone_wire"));
+  }
+  q.push(setLocal(c, count, 2, 3, withBlockStates("minecraft:stone_button", { facing_direction: FACING_UP, button_pressed_bit: false })));
+  q.push(setLocal(c, count, 1, 2, "minecraft:sea_lantern"));
+  const blockBounds = localBounds(c, 0, 0, 0, count, 4, 3);
+  for (let x = 0; x < count; x++) {
+    const point = localPoint(c, x, 1, 2);
+    for (let slot = 0; slot < 3; slot++) {
+      q.push(`replaceitem block ${point.x} ${point.y} ${point.z} slot.container ${slot} minecraft:firework_rocket 64`);
+    }
+  }
+  const plan = makePlan(player, "Firework Launcher", c, q, blockBounds);
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  plan.count = count;
+  return plan;
+}
+
+/**
+ * Observer and piston sugar cane farm. Cane grows on sand beside a water
+ * channel; when a stalk reaches three blocks the observer fires the piston,
+ * and the water carries the cane to a hopper and chest at the right-hand end.
+ */
+function createSugarCaneFarmPlan(player, width) {
+  width = clampNumber(Math.round(width), 2, 8);
+  const c = createOrientedBuildContext(player, width + 3, 5, -1);
+  const q = [];
+  const endX = width + 2;
+  q.push(fillLocal(c, 0, 1, 0, endX, 6, 4, "minecraft:air"));
+  q.push(fillLocal(c, 0, 0, 0, endX, 0, 4, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, 1, 0, width + 1, 1, 0, CONTRAPTION_BASE));
+  q.push(setLocal(c, 0, 1, 1, CONTRAPTION_BASE));
+  q.push(setLocal(c, width + 1, 1, 1, CONTRAPTION_BASE));
+  q.push(setLocal(c, width, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 1, 0), toggle_bit: false })));
+  q.push(setLocal(c, width + 1, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 1, 0), toggle_bit: false })));
+  q.push(setLocal(c, width + 2, 0, 1, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
+  q.push(setLocal(c, 1, 1, 1, "minecraft:water"));
+  q.push(fillLocal(c, 1, 1, 2, width, 1, 2, "minecraft:sand"));
+  q.push(fillLocal(c, 1, 2, 2, width, 2, 2, withBlockStates("minecraft:reeds", { age: 0 })));
+  q.push(fillLocal(c, 1, 1, 3, width, 2, 4, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 1, 3, 4, width, 3, 4, CONTRAPTION_BASE));
+  for (let x = 1; x <= width; x++) {
+    q.push(setLocal(c, x, 3, 3, withBlockStates("minecraft:piston", { facing_direction: facingCode(c, 0, -1) })));
+    q.push(setLocal(c, x, 4, 3, withBlockStates("minecraft:observer", { "minecraft:facing_direction": facingName(c, 0, -1), powered_bit: false })));
+    q.push(setLocal(c, x, 4, 4, "minecraft:redstone_wire"));
+  }
+  q.push(setLocal(c, 0, 1, 4, "minecraft:lantern"));
+  q.push(setLocal(c, width + 1, 1, 4, "minecraft:lantern"));
+  const plan = makePlan(player, "Sugar Cane Farm", c, q, localBounds(c, 0, 0, 0, endX, 6, 4));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  plan.width = width;
+  return plan;
+}
+
+/**
+ * Lamp posts in a grid around the player that light themselves at night: a
+ * fence post, a redstone lamp and an inverted daylight sensor on top.
+ */
+function createStreetLampPlan(player, radius) {
+  radius = clampNumber(Math.round(radius), 6, 30);
+  const loc = player.location;
+  const px = Math.floor(loc.x), py = Math.floor(loc.y), pz = Math.floor(loc.z);
+  const dimension = player.dimension;
+  const range = getDimensionBuildRange(player);
+  const commands = [];
+  let bounds = null;
+  let count = 0;
+  const spacing = 6;
+  const start = -Math.floor(radius / spacing) * spacing;
+  for (let dx = start; dx <= radius; dx += spacing) {
+    for (let dz = start; dz <= radius; dz += spacing) {
+      if (dx === 0 && dz === 0) continue;
+      const x = px + dx, z = pz + dz;
+      for (let y = py + 4; y >= py - 4; y--) {
+        if (y + 3 > range.max || y - 1 < range.min) continue;
+        try {
+          const block = dimension.getBlock({ x, y, z });
+          const below = dimension.getBlock({ x, y: y - 1, z });
+          if (!block || !below || !block.isAir || below.isAir || LIQUID_BLOCKS.has(below.typeId)) continue;
+        } catch (e) { break; }
+        commands.push(`fill ${x} ${y} ${z} ${x} ${y + 1} ${z} minecraft:oak_fence`);
+        commands.push(`setblock ${x} ${y + 2} ${z} minecraft:redstone_lamp`);
+        commands.push(`setblock ${x} ${y + 3} ${z} minecraft:daylight_detector_inverted`);
+        const post = { x1: x, y1: y, z1: z, x2: x, y2: y + 3, z2: z };
+        bounds = bounds ? {
+          x1: Math.min(bounds.x1, post.x1), y1: Math.min(bounds.y1, post.y1), z1: Math.min(bounds.z1, post.z1),
+          x2: Math.max(bounds.x2, post.x2), y2: Math.max(bounds.y2, post.y2), z2: Math.max(bounds.z2, post.z2)
+        } : post;
+        count++;
+        break;
+      }
+    }
+  }
+  if (!count) return null;
+  return { name: "Night Lamps", dimensionId: dimension.id, commands, bounds, batchSize: CONTRAPTION_BATCH_SIZE, count, radius };
+}
+
+/** Straight powered railway in the facing direction, with a buffer block at the far end. */
+function createRailwayPlan(player, length) {
+  length = clampNumber(Math.round(length), 5, 60);
+  const c = createOrientedBuildContext(player, 3, length + 1, -1);
+  const q = [];
+  const railDirection = c.forwardX !== 0 ? 1 : 0;
+  q.push(fillLocal(c, 0, 1, 0, 2, 3, length, "minecraft:air"));
+  q.push(fillLocal(c, 0, 0, 0, 2, 0, length, CONTRAPTION_BASE));
+  for (let z = 0; z < length; z++) {
+    if (z % 4 === 0) {
+      q.push(setLocal(c, 1, 0, z, "minecraft:redstone_block"));
+      q.push(setLocal(c, 1, 1, z, withBlockStates("minecraft:golden_rail", { rail_direction: railDirection, rail_data_bit: true })));
+      q.push(setLocal(c, 0, 0, z, "minecraft:sea_lantern"));
+      q.push(setLocal(c, 2, 0, z, "minecraft:sea_lantern"));
+    } else {
+      q.push(setLocal(c, 1, 1, z, withBlockStates("minecraft:rail", { rail_direction: railDirection })));
+    }
+  }
+  q.push(setLocal(c, 1, 1, length, CONTRAPTION_BASE));
+  q.push(setLocal(c, 1, 2, length, "minecraft:lantern"));
+  const plan = makePlan(player, "Powered Railway", c, q, localBounds(c, 0, 0, 0, 2, 3, length));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  plan.length = length;
+  return plan;
+}
+
+const CONTRAPTIONS = [
+  {
+    key: "auto_door", name: "🚪 Automatic Door", description: "Iron door that opens from plates or buttons",
+    fields: [
+      { type: "dropdown", key: "frame", label: "Wall block around the door:", options: DOOR_FRAME_BLOCKS.map((b) => b.name) },
+      { type: "dropdown", key: "trigger", label: "Opens with:", options: ["Pressure plates (walk up to it)", "Buttons on both sides"] }
+    ],
+    create: (player, v) => createAutoDoorPlan(player, (DOOR_FRAME_BLOCKS[v.frame] || DOOR_FRAME_BLOCKS[0]).id, v.trigger === 1 ? "buttons" : "plates"),
+    prompt: () => "Build an iron door with its own opener here?",
+    success: () => "🚪 Automatic door built! Walk up to it or press the button."
+  },
+  {
+    key: "bubble_elevator", name: "🫧 Bubble Elevator", description: "Water lift up a glass tower, optional magma shaft down",
+    fields: [
+      { type: "slider", key: "height", label: "Height (blocks):", min: 3, max: 60, step: 1, defaultValue: 12 },
+      { type: "toggle", key: "down", label: "Add a magma shaft to come back down", defaultValue: true }
+    ],
+    create: (player, v) => createBubbleElevatorPlan(player, v.height, Boolean(v.down)),
+    prompt: (plan) => `Build a ${plan.height}-block bubble elevator here?\n\nGo through the door at the bottom and float up. Step out onto the landing at the top.`,
+    success: (plan) => `🫧 ${plan.height}-block bubble elevator built! Open the door at the bottom and float up. The magma shaft is hot, so step out quickly at the bottom.`
+  },
+  {
+    key: "firework_launcher", name: "🎆 Firework Launcher", description: "Press one button, launch a firework show",
+    fields: [{ type: "slider", key: "count", label: "Number of launchers:", min: 1, max: 9, step: 1, defaultValue: 5 }],
+    create: (player, v) => createFireworkLauncherPlan(player, v.count),
+    prompt: (plan) => `Build ${plan.count} firework launchers with a button here?`,
+    success: (plan) => `🎆 ${plan.count} firework launchers loaded with 192 rockets each! Press the button to start the show.`
+  },
+  {
+    key: "sugar_cane_farm", name: "🌾 Auto Sugar Cane Farm", description: "Observers and pistons harvest into a chest",
+    fields: [{ type: "slider", key: "width", label: "Farm width (rows of cane):", min: 2, max: 8, step: 1, defaultValue: 6 }],
+    create: (player, v) => createSugarCaneFarmPlan(player, v.width),
+    prompt: (plan) => `Build an automatic sugar cane farm ${plan.width} rows wide here?\n\nThe chest is at the right-hand end of the water channel.`,
+    success: (plan) => `🌾 Automatic sugar cane farm built (${plan.width} rows)! Cane is harvested as it grows and floats to the chest.`
+  },
+  {
+    key: "street_lamps", name: "🌃 Night Lamps", description: "Lamp posts that switch on at night",
+    fields: [{ type: "slider", key: "radius", label: "Area around you (blocks):", min: 6, max: 30, step: 1, defaultValue: 12 }],
+    create: (player, v) => createStreetLampPlan(player, v.radius),
+    prompt: (plan) => `Place ${plan.count} night lamps within ${plan.radius} blocks of you?`,
+    success: (plan) => `🌃 Placed ${plan.count} night lamps! They light up by themselves when it gets dark.`,
+    empty: "No open ground for lamp posts was found around you."
+  },
+  {
+    key: "railway", name: "🚂 Powered Railway", description: "Straight track with powered rails and a minecart",
+    fields: [
+      { type: "slider", key: "length", label: "Track length (blocks):", min: 5, max: 60, step: 1, defaultValue: 20 },
+      { type: "toggle", key: "cart", label: "Give me a minecart", defaultValue: true }
+    ],
+    create: (player, v) => createRailwayPlan(player, v.length),
+    prompt: (plan) => `Build a ${plan.length}-block powered railway in front of you?`,
+    success: (plan) => `🚂 ${plan.length}-block railway built! Place a minecart on the first rail, hop in and push forward.`,
+    after: (player, v) => { if (v.cart && giveItemToPlayer(player, "minecraft:minecart", 1)) player.sendMessage("§a🛒 A minecart was added to your inventory.§r"); }
+  }
+];
+
+function openContraptionMenu(player) {
+  const form = new ActionFormData()
+    .title("⚡ Redstone Contraptions")
+    .body("Working machines, placed in the direction you are facing:");
+  for (const contraption of CONTRAPTIONS) form.button(`${contraption.name}\n§7${contraption.description}`);
+  form.button("⬅️ Back\n§7Return to Builder Tools");
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    if (response.selection === CONTRAPTIONS.length) return openBuilderToolsMenu(player);
+    const contraption = CONTRAPTIONS[response.selection];
+    if (contraption) openContraptionOptionsMenu(player, contraption);
+  }).catch((e) => console.error("Contraption menu error: " + e));
+}
+
+function openContraptionOptionsMenu(player, contraption) {
+  const form = new ModalFormData().title(contraption.name);
+  for (const field of contraption.fields) {
+    if (field.type === "slider") form.slider(field.label, field.min, field.max, { valueStep: field.step, defaultValue: field.defaultValue });
+    else if (field.type === "dropdown") form.dropdown(field.label, field.options, { defaultValueIndex: field.defaultValue || 0 });
+    else form.toggle(field.label, { defaultValue: field.defaultValue });
+  }
+  form.toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const raw = response.formValues;
+    const values = {};
+    contraption.fields.forEach((field, i) => {
+      values[field.key] = field.type === "toggle" ? Boolean(raw[i]) : Math.round(Number(raw[i]));
+    });
+    const showGuide = raw[contraption.fields.length];
+    const plan = contraption.create(player, values);
+    if (!plan) {
+      player.sendMessage(`§e${contraption.empty || "Nothing to build here."}§r`);
+      return;
+    }
+    if (!validateBuildBounds(player, plan.bounds)) return;
+    const confirm = () => {
+      executeBuildPlan(player, plan, `contraption_${contraption.key}`, contraption.success(plan), "random.levelup").then((built) => {
+        if (built && contraption.after && isValidEntity(player)) contraption.after(player, values);
+      });
+    };
+    if (showGuide) startPreview(player, plan.bounds, "minecraft:villager_happy", contraption.prompt(plan), confirm);
+    else confirm();
+  }).catch((e) => console.error("Contraption options error: " + e));
 }
 
 function openBridgeAndStairMenu(player) {

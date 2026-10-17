@@ -831,14 +831,14 @@ test('builder tools menu opens the right tool for every button', async () => {
   modalForm(ctx, titles, null);
   const expected = ['🕳️ Dig an Empty Hole', '🧱 Build / Fill Blocks', '🚜 Flatten / Level Ground', '🪜 Instant Underfoot Platform',
     '🏠 Starter Base Templates', '🏡 House Designs', '🏘️ Build a Modern Village', '🔷 Shapes & Beacons', '🏊 Swimming Pool',
-    '🌊 Drain Water & Lava', '🌉 Bridge & Stair Builder', null, '🧹 Area Cleanup', null, '✨ Helper Tools Device ✨'];
+    '🌊 Drain Water & Lava', '⚡ Redstone Contraptions', '🌉 Bridge & Stair Builder', null, '🧹 Area Cleanup', null, '✨ Helper Tools Device ✨'];
   for (let i = 0; i < expected.length; i++) {
     titles.length = 0; player.messages.length = 0; selection = i;
     ctx.openBuilderToolsMenu(player);
     await tick();
     if (expected[i]) assert.equal(titles[1], expected[i], `button ${i}`);
-    if (i === 13) assert.ok(player.messages.some(m => m.includes('Nothing to undo')), 'undo button');
-    if (i === 11) assert.ok(player.messages.some(m => m.includes('Lit up')), 'light up button');
+    if (i === 14) assert.ok(player.messages.some(m => m.includes('Nothing to undo')), 'undo button');
+    if (i === 12) assert.ok(player.messages.some(m => m.includes('Lit up')), 'light up button');
   }
   assert.equal(buttons, expected.length);
   titles.length = 0; selection = 5;
@@ -849,4 +849,115 @@ test('builder tools menu opens the right tool for every button', async () => {
   ctx.openHouseDesignsMenu(player);
   await tick();
   assert.equal(titles[1], '🏡 Cosy Cottage 🏡');
+  titles.length = 0; selection = 1;
+  ctx.openContraptionMenu(player);
+  await tick();
+  assert.equal(titles[1], '🫧 Bubble Elevator');
+});
+
+function countBlocks(blocks, predicate) {
+  return [...blocks.values()].filter(predicate).length;
+}
+
+test('redstone contraptions build in every facing with working parts and undo', async () => {
+  const base = harness();
+  const keys = base.evaluate('CONTRAPTIONS.map(c => c.key)');
+  const limit = base.evaluate('FILL_COMMAND_LIMIT');
+  assert.equal(keys.join(' '), 'auto_door bubble_elevator firework_launcher sugar_cane_farm street_lamps railway');
+  for (let f = 0; f < FACINGS.length; f++) {
+    const { ctx, player, dimension, tick } = harness();
+    player.getViewDirection = () => FACINGS[f];
+    const { blocks, states } = blockWorld(dimension);
+    const alongX = FACINGS[f].x !== 0;
+    const plans = {
+      auto_door: ctx.createAutoDoorPlan(player, 'minecraft:stone_bricks', f % 2 ? 'buttons' : 'plates'),
+      bubble_elevator: ctx.createBubbleElevatorPlan(player, 10, f % 2 === 0),
+      firework_launcher: ctx.createFireworkLauncherPlan(player, 4),
+      sugar_cane_farm: ctx.createSugarCaneFarmPlan(player, 6),
+      street_lamps: ctx.createStreetLampPlan(player, 12),
+      railway: ctx.createRailwayPlan(player, 10)
+    };
+    for (const [key, plan] of Object.entries(plans)) {
+      const blockCommands = plan.commands.filter(c => !c.startsWith('replaceitem'));
+      assertCommandsInside(ctx, { ...plan, commands: blockCommands }, limit);
+      player.messages.length = 0;
+      await settle(ctx.executeBuildPlan(player, plan, `contraption_${key}`, `${key} done`), tick);
+      assert.ok(player.messages.some(m => m.includes(`${key} done`)), `${key}: ${player.messages.join('\n')}`);
+      const placed = new Map(blocks);
+      if (key === 'auto_door') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:iron_door'), 2);
+        assert.equal(countBlocks(placed, v => v === (f % 2 ? 'minecraft:stone_button' : 'minecraft:stone_pressure_plate')), 2);
+      } else if (key === 'bubble_elevator') {
+        const shafts = f % 2 === 0 ? 2 : 1;
+        assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 10 * shafts);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:soul_sand'), 1);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:magma'), shafts - 1);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:wooden_door'), 2 * shafts);
+        assert.equal(plan.bounds.y2 - plan.bounds.y1 + 1, 14);
+      } else if (key === 'firework_launcher') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:dispenser'), 4);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:redstone_wire'), 4);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:stone_button'), 1);
+        const loads = plan.commands.filter(c => c.startsWith('replaceitem'));
+        assert.equal(loads.length, 12);
+        assert.ok(loads.every(c => /^replaceitem block -?\d+ -?\d+ -?\d+ slot\.container [012] minecraft:firework_rocket 64$/.test(c)));
+        assert.ok(plan.commands.indexOf(loads[0]) > plan.commands.findIndex(c => c.includes('minecraft:dispenser')), 'dispensers exist before loading');
+      } else if (key === 'sugar_cane_farm') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:reeds'), 6);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:piston'), 6);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:observer'), 6);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:sand'), 6);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 1);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:hopper'), 2);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
+        const piston = plan.commands.find(c => c.includes('minecraft:piston'));
+        const observer = plan.commands.find(c => c.includes('minecraft:observer'));
+        const towardsPlayer = { '1,0': [4, 'west'], '-1,0': [5, 'east'], '0,1': [2, 'north'], '0,-1': [3, 'south'] }[`${FACINGS[f].x},${FACINGS[f].z}`];
+        assert.ok(piston.includes(`"facing_direction"=${towardsPlayer[0]}`), piston);
+        assert.ok(observer.includes(`"minecraft:facing_direction"="${towardsPlayer[1]}"`), observer);
+      } else if (key === 'street_lamps') {
+        assert.equal(plan.count, 24);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:redstone_lamp'), 24);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:daylight_detector_inverted'), 24);
+        assert.equal(plan.bounds.y1, 64);
+        assert.equal(plan.bounds.y2, 67);
+      } else if (key === 'railway') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:golden_rail'), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:rail'), 7);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:redstone_block'), 3);
+        assert.ok(plan.commands.some(c => c.includes(`minecraft:rail ["rail_direction"=${alongX ? 1 : 0}]`)));
+        assert.ok(plan.commands.some(c => c.includes(`minecraft:golden_rail ["rail_direction"=${alongX ? 1 : 0},"rail_data_bit"=true]`)));
+      }
+      await ctx.executeUndo(player);
+      assert.ok(player.messages.some(m => m.includes('Undid')), key);
+      blocks.clear();
+      states.clear();
+    }
+  }
+  base.dimension.getBlock = () => ({ isAir: true, typeId: 'minecraft:air' });
+  assert.equal(base.ctx.createStreetLampPlan(base.player, 12), null);
+  assert.equal(base.ctx.createBubbleElevatorPlan(base.player, 99, false).height, 60);
+  assert.equal(base.ctx.createRailwayPlan(base.player, 1).length, 5);
+});
+
+test('contraption menu builds from its options form and then gives the railway minecart', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  blockWorld(dimension);
+  const given = [];
+  player.getComponent = () => ({ container: { addItem(item) { given.push(item); return undefined; } } });
+  ctx.ItemStack = class { constructor(typeId, amount) { this.typeId = typeId; this.amount = amount; } };
+  modalForm(ctx, [], [8, true, false]);
+  const contraptions = vm.runInContext('CONTRAPTIONS', ctx);
+  ctx.openContraptionOptionsMenu(player, contraptions[5]);
+  for (let i = 0; i < 10; i++) await tick();
+  assert.ok(player.messages.some(m => m.includes('railway built')), player.messages.join('\n'));
+  assert.equal(given.length, 1);
+  assert.equal(given[0].typeId, 'minecraft:minecart');
+  assert.ok(player.messages.some(m => m.includes('minecart was added')));
+  player.messages.length = 0;
+  dimension.getBlock = () => ({ isAir: true, typeId: 'minecraft:air' });
+  modalForm(ctx, [], [12, false]);
+  ctx.openContraptionOptionsMenu(player, contraptions[4]);
+  for (let i = 0; i < 5; i++) await tick();
+  assert.ok(player.messages.some(m => m.includes('No open ground')), player.messages.join('\n'));
 });
