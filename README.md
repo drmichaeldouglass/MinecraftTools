@@ -17,7 +17,7 @@ The Helper Device menu has six sections.
 | 🎮 **Game Modes & Time** | Day, night, clear weather, Creative and Survival mode |
 | 🛡️ **Life Savers & Rescue** | Heal and feed, clear nearby monsters, cave rescue, fire shield, cure effects |
 | ⚡ **Superpowers & Flying** | Night vision, super speed and jump, Elytra with rockets |
-| 🏗️ **Builder Tools** | Dig, fill, flatten, platforms, houses, a whole village, shapes and beacons, swimming pools, draining water and lava, redstone contraptions, bridges, stairs, torches, cleanup, undo |
+| 🏗️ **Builder Tools** | Dig, fill, flatten, platforms, houses, a whole village or city, shapes and beacons, swimming pools, draining water and lava, redstone contraptions, bridges, stairs, torches, cleanup, undo |
 | 📍 **Spawn & Teleport** | Set and return to spawn, teleport to players, find biomes and structures, go to coordinates |
 | 🐾 **Pets & Companions** | Tame dog, cat, parrot, saddled horse, iron golem, axolotl |
 
@@ -48,8 +48,8 @@ Builds are placed in front of you, in the direction you are facing.
 | 🚜 **Flatten / Level Ground** | Clears trees and hills in a 5 to 20 block radius and lays a fresh floor |
 | 🪜 **Instant Underfoot Platform** | 3×3 up to 9×9 platform right under your feet |
 | 🏠 **Starter Base Templates** | Furnished Simple House, Large Two-Storey House, Stone Fort, Tree House or Underground Bunker. The houses now have real doors. |
-| 🏡 **House Designs** | Eight furnished houses with doors: Cosy Cottage (pitched roof and chimney), A-Frame Cabin, Modern Villa (two storeys with a roof terrace), Stone Watchtower (ladder up three floors), Modern Bungalow, Carport House, Studio Cabin and Family Home. Each can be built in seven styles: Crisp White, Charcoal & Oak, Sandstone & Spruce, Rustic Oak & Cobblestone, Spruce Lodge, Desert Sandstone or Cherry Blossom. |
-| 🏘️ **Build a Modern Village** | A 61×61 village: four furnished houses, a three-storey apartment block, a cafe with a flat upstairs, a crop farm, an orchard with a glasshouse and a plaza with a well, joined by lit roads. Three colour schemes. |
+| 🏡 **House Designs** | Eight houses furnished with the add-on's own chairs, sofas, TVs, lamps and fridges, all with doors: Cosy Cottage (pitched roof and chimney), A-Frame Cabin, Modern Villa (two storeys with a roof terrace), Stone Watchtower (ladder up three floors), Modern Bungalow, Carport House, Studio Cabin and Family Home. Each can be built in seven styles: Crisp White, Charcoal & Oak, Sandstone & Spruce, Rustic Oak & Cobblestone, Spruce Lodge, Desert Sandstone or Cherry Blossom. |
+| 🏘️ **Build a Village or City** | A 61×61 **Modern Village**: four furnished houses, a three-storey apartment block, a cafe with a flat upstairs, a crop farm, an orchard with a glasshouse and a plaza with a well, joined by lit roads. Or a 61×61 **Modern City**: five glass skyscrapers of 5 to 12 storeys (offices, a hotel and apartments) each with a bubble-column lift, a two-storey shopping mall with an atrium and food court, a city hall with a clock tower, a restaurant with a rooftop terrace and a park with a fountain. Three colour schemes. |
 | 🔷 **Shapes & Beacons** | Sphere, dome, stepped pyramid, cylinder or tower (height 1 gives a disc or ring) and cone, solid or hollow, in any block from the list or a typed block ID. Radius up to 25, pyramid base up to 61. Plus a working beacon on a 1 to 4 level pyramid of iron, gold, emerald, diamond, netherite or a rainbow mix, with an optional coloured beam and the sky above cleared. |
 | 🏊 **Swimming Pool** | Pool 1 to 25 blocks wide and long, 1 to 6 deep, sunk into the ground with the water level with the surface. Six tile colours, five deck materials (or none), underwater sea lanterns and a diving board. |
 | 🌊 **Drain Water & Lava** | Removes water, lava or both within 3 to 25 blocks of you. Undoable. |
@@ -146,7 +146,10 @@ About undo:
 - The undo is kept in memory, so it is lost when the world is closed.
 - Torches from **Light Up Area** and things removed by **Area Cleanup** can't be undone.
 
-For the **Modern Village**, find a reasonably open area, leave **Flatten and prepare the ground first** on unless the land is already flat, and wait a couple of seconds while it builds in stages.
+For the **Modern Village** or **Modern City**, find a reasonably open area, leave **Flatten and prepare the ground first** on unless the land is already flat, and wait a few seconds while it builds in stages. In the city, every tower has a lift core behind the lobby: open a lift door, step in and the bubble column carries you up (left shaft) or down (right shaft); open the door on the storey you want and step out.
+
+### Furniture
+Houses, the village and the city are furnished with the add-on's own furniture blocks: chairs, sofas, tables, floor lamps (they give off light), televisions, fridges and computers. You can also place them yourself from the Construction tab of the Creative inventory; they turn to face you when placed. If you would rather use plain Minecraft blocks (stairs for seats, fences for tables), turn off **Use Helper Tools furniture** in the house or village form.
 
 Shapes rest on the ground at your feet and start one block in front of you, so stand back from where you want the middle to be. Large hollow spheres and cones are placed over a few seconds. A **Beacon** only shines when nothing solid is straight above it, so leave **Clear the sky** on unless you are already outdoors. After it is built, tap the beacon block to pick its power.
 
@@ -200,8 +203,8 @@ Every player gets their own Helper Device and their own undo. **👥 Teleport to
 
 | Path | Contents |
 | --- | --- |
-| `Behavior_Pack/` | Behavior pack: manifest, the Helper Device item and `scripts/main.js` |
-| `Resource_Pack/` | Resource pack: manifest, textures and language files |
+| `Behavior_Pack/` | Behavior pack: manifest, the Helper Device item, the furniture block definitions in `blocks/` and `scripts/main.js` |
+| `Resource_Pack/` | Resource pack: manifest, textures, furniture block models in `models/blocks/` and language files |
 | `tests/regression.cjs` | Regression tests that run against a mocked Script API |
 | `build.sh` | Packages both packs into the installers |
 | `dist/` | Built installers, committed so players can download them from the repository |

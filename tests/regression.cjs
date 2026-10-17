@@ -830,7 +830,7 @@ test('builder tools menu opens the right tool for every button', async () => {
   };
   modalForm(ctx, titles, null);
   const expected = ['🕳️ Dig an Empty Hole', '🧱 Build / Fill Blocks', '🚜 Flatten / Level Ground', '🪜 Instant Underfoot Platform',
-    '🏠 Starter Base Templates', '🏡 House Designs', '🏘️ Build a Modern Village', '🔷 Shapes & Beacons', '🏊 Swimming Pool',
+    '🏠 Starter Base Templates', '🏡 House Designs', '🏘️ Build a Village or City', '🔷 Shapes & Beacons', '🏊 Swimming Pool',
     '🌊 Drain Water & Lava', '⚡ Redstone Contraptions', '🌉 Bridge & Stair Builder', null, '🧹 Area Cleanup', null, '✨ Helper Tools Device ✨'];
   for (let i = 0; i < expected.length; i++) {
     titles.length = 0; player.messages.length = 0; selection = i;
@@ -960,4 +960,119 @@ test('contraption menu builds from its options form and then gives the railway m
   ctx.openContraptionOptionsMenu(player, contraptions[4]);
   for (let i = 0; i < 5; i++) await tick();
   assert.ok(player.messages.some(m => m.includes('No open ground')), player.messages.join('\n'));
+});
+
+test('modern city fits the village snapshot, builds with lifts, towers and furniture in all facings, and undoes', async () => {
+  const base = harness();
+  const limit = base.evaluate('FILL_COMMAND_LIMIT');
+  const size = base.evaluate('VILLAGE_SIZE');
+  for (const facing of FACINGS) {
+    const { ctx, player, dimension, tick } = harness();
+    player.getViewDirection = () => facing;
+    const { blocks } = blockWorld(dimension);
+    const plan = ctx.createVillagePlan(player, 0, true, 'city', true);
+    const b = plan.bounds;
+    assert.ok(b.x2 - b.x1 + 1 <= 64 && b.z2 - b.z1 + 1 <= 64 && b.y2 - b.y1 + 1 <= 384, 'city fits one structure snapshot');
+    assert.equal(b.x2 - b.x1 + 1, size);
+    assertCommandsInside(ctx, plan, limit);
+    assert.ok(plan.commands.length > 1500, `city has many commands (${plan.commands.length})`);
+    await settle(ctx.executeBuildPlan(player, plan, 'city', 'City done'), tick);
+    assert.ok(player.messages.some(m => m.includes('City done')), player.messages.join('\n'));
+    assert.ok(!player.messages.some(m => m.includes('command failed')));
+    const placed = new Set(blocks.values());
+    for (const needed of ['minecraft:soul_sand', 'minecraft:magma', 'minecraft:water', 'minecraft:beacon', 'minecraft:end_rod',
+      'minecraft:light_blue_stained_glass', 'tools:chair', 'tools:sofa', 'tools:table', 'tools:lamp', 'tools:tv', 'tools:fridge',
+      'tools:computer', 'minecraft:bed', 'minecraft:bell', 'minecraft:poppy']) {
+      assert.ok(placed.has(needed), `${needed} placed`);
+    }
+    // Two lift doors per storey, four room doors per storey above the lobby in the hotel and
+    // apartment towers, and ten street entrances.
+    const doors = plan.commands.filter(c => c.includes('_door') && c.includes('"upper_block_bit"=false')).length;
+    assert.equal(doors, 2 * (10 + 7 + 8 + 12 + 5) + 4 * (6 + 7 + 4) + 10);
+    const tallest = Math.max(...plan.commands.map(c => ctx.parseBlockCommand(c).y2));
+    assert.ok(tallest >= 63 + 48 + 4 && tallest <= 63 + 56, `skyline height ${tallest}`);
+    await ctx.executeUndo(player);
+    assert.ok(player.messages.some(m => m.includes('Undid')));
+  }
+  const plain = base.ctx.createVillagePlan(base.player, 1, false, 'city', false);
+  assert.ok(!plain.commands.some(c => c.includes('tools:')), 'furniture can be switched off');
+  assert.ok(plain.commands.some(c => c.includes('minecraft:lectern')) && plain.commands.some(c => c.includes('weirdo_direction')));
+  assert.equal(plain.layout, 'city');
+  const village = base.ctx.createVillagePlan(base.player, 0, true);
+  assert.equal(village.layout, 'village');
+  assert.ok(village.commands.some(c => c.includes('tools:tv ["minecraft:cardinal_direction"=')));
+  assert.ok(village.commands.some(c => c.includes('tools:fridge')));
+  assert.ok(!base.ctx.createVillagePlan(base.player, 0, true, 'village', false).commands.some(c => c.includes('tools:')));
+  assert.ok(!base.ctx.createHouseDesignPlan(base.player, 'cottage', 0, false).commands.some(c => c.includes('tools:')));
+  assert.ok(base.ctx.createHouseDesignPlan(base.player, 'cottage', 0).commands.some(c => c.includes('tools:lamp')));
+});
+
+test('village and city menu passes layout, furniture and ground choices through', async () => {
+  const { ctx, player, tick } = harness();
+  let received;
+  ctx.createVillagePlan = (p, palette, ground, layout, furniture) => {
+    received = { palette, ground, layout, furniture };
+    return { name: 'x', dimensionId: p.dimension.id, commands: [], bounds: previewBounds, palette: 'P', layout };
+  };
+  ctx.executeBuildPlan = () => Promise.resolve(true);
+  modalForm(ctx, [], [1, 2, false, false, false]);
+  ctx.openVillageBuilderMenu(player);
+  await tick();
+  assert.equal(JSON.stringify(received), JSON.stringify({ palette: 2, ground: false, layout: 'city', furniture: false }));
+  assert.ok(player.messages.some(m => m.includes('modern city is built')));
+});
+
+test('furniture blocks are defined consistently across both packs', () => {
+  const bpDir = path.join(__dirname, '../Behavior_Pack/blocks');
+  const rpDir = path.join(__dirname, '../Resource_Pack');
+  const terrain = JSON.parse(fs.readFileSync(path.join(rpDir, 'textures/terrain_texture.json'))).texture_data;
+  const blocksJson = JSON.parse(fs.readFileSync(path.join(rpDir, 'blocks.json')));
+  const lang = fs.readFileSync(path.join(rpDir, 'texts/en_US.lang'), 'utf8');
+  const { ctx, evaluate } = harness();
+  const furniture = evaluate('Object.values(FURNITURE_BLOCKS)');
+  const defined = [];
+  for (const file of fs.readdirSync(bpDir)) {
+    const block = JSON.parse(fs.readFileSync(path.join(bpDir, file)))['minecraft:block'];
+    const id = block.description.identifier;
+    defined.push(id);
+    const geometryId = block.components['minecraft:geometry'];
+    const geoFile = path.join(rpDir, 'models/blocks', `${geometryId.replace('geometry.', '')}.geo.json`);
+    const geometry = JSON.parse(fs.readFileSync(geoFile))['minecraft:geometry'][0];
+    assert.equal(geometry.description.identifier, geometryId, file);
+    const materials = block.components['minecraft:material_instances'];
+    assert.ok(materials['*'], `${file} has a default material`);
+    for (const [name, material] of Object.entries(materials)) {
+      assert.ok(terrain[material.texture], `${file} material ${name} texture ${material.texture} is in terrain_texture.json`);
+      assert.ok(fs.existsSync(path.join(rpDir, terrain[material.texture].textures + '.png')), `${material.texture} png exists`);
+    }
+    for (const bone of geometry.bones) for (const cube of bone.cubes) {
+      for (const [face, uv] of Object.entries(cube.uv)) {
+        if (uv.material_instance) assert.ok(materials[uv.material_instance], `${file} ${face} material ${uv.material_instance} defined`);
+      }
+      for (let axis = 0; axis < 3; axis++) {
+        const lo = cube.origin[axis], hi = lo + cube.size[axis];
+        if (axis === 1) assert.ok(lo >= 0 && hi <= 16, `${file} cube inside block height`);
+        else assert.ok(lo >= -8 && hi <= 8, `${file} cube inside block footprint`);
+      }
+    }
+    for (const key of ['minecraft:collision_box', 'minecraft:selection_box']) {
+      const box = block.components[key];
+      assert.ok(box.origin[1] >= 0 && box.origin[1] + box.size[1] <= 16 && box.origin[0] >= -8 && box.origin[0] + box.size[0] <= 8 && box.origin[2] >= -8 && box.origin[2] + box.size[2] <= 8, `${file} ${key}`);
+    }
+    const traits = block.description.traits;
+    if (traits) {
+      assert.deepEqual(Object.keys(traits), ['minecraft:placement_direction']);
+      const rotations = block.permutations.map(p => p.components['minecraft:transformation'].rotation[1]).sort((a, b) => a - b);
+      assert.equal(rotations.join(' '), '0 90 180 270');
+      for (const d of ['north', 'south', 'east', 'west']) assert.ok(block.permutations.some(p => p.condition.includes(`'${d}'`)), `${file} rotates ${d}`);
+    }
+    assert.ok(blocksJson[id], `${id} in blocks.json`);
+    assert.ok(lang.includes(`tile.${id}.name=`), `${id} has a name`);
+  }
+  assert.equal(furniture.slice().sort().join(' '), defined.sort().join(' '));
+  for (const id of ['tools:chair', 'tools:tv']) {
+    const block = JSON.parse(fs.readFileSync(path.join(bpDir, `${id.replace('tools:', 'tools_')}.json`)))['minecraft:block'];
+    assert.ok(block.description.traits, `${id} is directional`);
+  }
+  assert.ok(ctx.parseBlockCommand('setblock 0 64 0 tools:chair ["minecraft:cardinal_direction"="north"]'));
 });

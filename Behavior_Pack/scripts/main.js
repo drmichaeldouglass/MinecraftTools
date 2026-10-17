@@ -727,7 +727,7 @@ function openBuilderToolsMenu(player) {
     .button("🪜 Instant Underfoot Platform\n§7Create a platform right under your feet", "textures/blocks/ladder")
     .button("🏠 Starter Base Templates\n§7Houses, fort, tree house, and bunker", "textures/items/bed_red")
     .button("🏡 House Designs\n§7Cottage, cabin, villa, tower and more in 7 styles", "textures/items/door_wood")
-    .button("🏘️ Build a Modern Village\n§7Furnished houses, apartments, cafe, farms, well", "textures/blocks/concrete_white")
+    .button("🏘️ Build a Village or City\n§7Furnished village, or a city with skyscrapers", "textures/blocks/concrete_white")
     .button("🔷 Shapes & Beacons\n§7Spheres, domes, pyramids, towers, cones, beacons", "textures/items/diamond")
     .button("🏊 Swimming Pool\n§7Tiled pool with deck, lights and diving board", "textures/items/bucket_water")
     .button("🌊 Drain Water & Lava\n§7Remove liquids around you (undoable)", "textures/items/bucket_empty")
@@ -1804,19 +1804,64 @@ function pushLargeFill(q, c, x1, y1, z1, x2, y2, z2, blockId, mode = "") {
   }
 }
 
+// Custom furniture blocks shipped by this add-on (see Behavior_Pack/blocks and
+// Resource_Pack/models). Directional ones face the way their
+// `minecraft:cardinal_direction` state points.
+const FURNITURE_BLOCKS = {
+  chair: "tools:chair", sofa: "tools:sofa", table: "tools:table", lamp: "tools:lamp",
+  tv: "tools:tv", fridge: "tools:fridge", computer: "tools:computer"
+};
+
 class VillageBuilder {
-  constructor(context, palette, blocks) {
+  constructor(context, palette, blocks, options = {}) {
     this.c = context;
     this.p = palette;
     this.b = blocks;
     this.q = [];
+    // Use the add-on's furniture models; when off, vanilla stand-ins are placed instead.
+    this.furniture = options.furniture !== false;
   }
   fill(x1, y1, z1, x2, y2, z2, blockId, mode = "") { this.q.push(fillLocal(this.c, x1, y1, z1, x2, y2, z2, blockId, mode)); }
+  /** Fill that is split so no single command exceeds the fill limit. */
+  bigFill(x1, y1, z1, x2, y2, z2, blockId, mode = "") { pushLargeFill(this.q, this.c, x1, y1, z1, x2, y2, z2, blockId, mode); }
   set(x, y, z, blockId) { this.q.push(setLocal(this.c, x, y, z, blockId)); }
+  /** Custom furniture block facing local direction (dx, dz). */
+  furnitureBlock(key, dx, dz) {
+    return withBlockStates(FURNITURE_BLOCKS[key], { "minecraft:cardinal_direction": CARDINAL_DIRECTION_NAMES[worldDirectionKey(this.c, dx, dz)] });
+  }
   /** Chair or sofa seat facing local direction (dx, dz): the tall side is behind the seat. */
   seat(x, y, z, dx, dz, blockId = this.p.chair) {
+    if (this.furniture) {
+      this.set(x, y, z, this.furnitureBlock(blockId === this.p.sofa ? "sofa" : "chair", dx, dz));
+      return;
+    }
     const code = STAIR_DIRECTION_CODES[worldDirectionKey(this.c, -dx, -dz)];
     this.set(x, y, z, withBlockStates(blockId, { weirdo_direction: code, upside_down_bit: false }));
+  }
+  /** Television whose screen faces local direction (dx, dz), one per block from (x1, z1) to (x2, z2). */
+  tv(x1, y, z1, x2, z2, dx, dz) {
+    if (!this.furniture) {
+      this.fill(x1, y, z1, x2, y, z2, this.b.tv);
+      return;
+    }
+    for (let x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
+      for (let z = Math.min(z1, z2); z <= Math.max(z1, z2); z++) this.set(x, y, z, this.furnitureBlock("tv", dx, dz));
+    }
+  }
+  /** Floor lamp (a lantern on a fence post when custom furniture is off). */
+  lamp(x, y, z) {
+    if (this.furniture) this.set(x, y, z, FURNITURE_BLOCKS.lamp);
+    else this.set(x, y, z, this.b.lantern);
+  }
+  /** Fridge whose door faces local direction (dx, dz). */
+  fridge(x, y, z, dx, dz) {
+    if (this.furniture) this.set(x, y, z, this.furnitureBlock("fridge", dx, dz));
+    else this.set(x, y, z, "minecraft:iron_block");
+  }
+  /** Desktop computer whose screen faces local direction (dx, dz). */
+  computer(x, y, z, dx, dz) {
+    if (this.furniture) this.set(x, y, z, this.furnitureBlock("computer", dx, dz));
+    else this.set(x, y, z, "minecraft:lectern");
   }
   /** Two-block bed with the foot at (x, z) and the head one block towards (dx, dz). */
   bed(x, y, z, dx, dz) {
@@ -1843,6 +1888,10 @@ class VillageBuilder {
     this.set(x, y, z, withBlockStates(blockId, { "minecraft:cardinal_direction": CARDINAL_DIRECTION_NAMES[worldDirectionKey(this.c, dx, dz)] }));
   }
   table(x, y, z) {
+    if (this.furniture) {
+      this.set(x, y, z, FURNITURE_BLOCKS.table);
+      return;
+    }
     this.set(x, y, z, this.p.fence);
     this.set(x, y + 1, z, this.b.plate);
   }
@@ -1874,6 +1923,7 @@ class VillageBuilder {
       const x = x1 + i;
       const item = items[i];
       if (item === "furnace" || item === "smoker" || item === "chest") this.facing(x, y, z, `minecraft:${item}`, dx, dz);
+      else if (item === "fridge") this.fridge(x, y, z, dx, dz);
       else if (item === "counter") this.set(x, y, z, this.p.counter);
       else this.set(x, y, z, `minecraft:${item}`);
     }
@@ -1900,11 +1950,12 @@ function drawBungalow(v) {
   v.fill(2, 2, 11, 8, 3, 11, b.glass);
   v.door(5, 1, 3, 0, 1);
   v.fill(6, 1, 4, 6, 4, 7, p.plank);
-  v.fill(6, 2, 6, 6, 2, 7, b.tv);
+  v.tv(5, 1, 6, 5, 7, -1, 0);
   v.fill(2, 1, 6, 4, 1, 8, p.carpet);
   for (let z = 6; z <= 8; z++) v.seat(1, 1, z, 1, 0, p.sofa);
   v.set(3, 1, 7, p.table);
-  v.kitchenRow(1, 10, 1, 0, -1, ["barrel", "furnace", "counter", "crafting_table", "counter"]);
+  v.lamp(1, 1, 4);
+  v.kitchenRow(1, 10, 1, 0, -1, ["fridge", "furnace", "counter", "crafting_table", "counter"]);
   v.set(5, 2, 10, "minecraft:flower_pot");
   v.bed(8, 1, 9, 0, 1);
   v.facing(9, 1, 10, "minecraft:chest", 0, -1);
@@ -1930,8 +1981,9 @@ function drawCarportHouse(v) {
   v.fill(2, 1, 5, 5, 1, 8, p.carpet);
   for (let z = 6; z <= 7; z++) v.seat(1, 1, z, 1, 0, p.sofa);
   v.set(3, 1, 6, p.table);
-  v.fill(7, 2, 6, 7, 2, 7, b.tv);
-  v.kitchenRow(1, 10, 1, 0, -1, ["furnace", "smoker", "crafting_table", "barrel"]);
+  v.tv(7, 1, 6, 7, 7, -1, 0);
+  v.lamp(7, 1, 4);
+  v.kitchenRow(1, 10, 1, 0, -1, ["furnace", "smoker", "crafting_table", "fridge"]);
   v.bed(6, 1, 9, 0, 1);
   v.facing(7, 1, 10, "minecraft:chest", 0, -1);
   v.set(5, 1, 10, "minecraft:bookshelf");
@@ -1989,8 +2041,10 @@ function drawFamilyHome(v) {
   }
   v.fill(8, 5, 5, 9, 5, 8, b.air);
   v.fill(7, 6, 5, 7, 6, 8, p.fence);
-  v.kitchenRow(1, 11, 1, 0, -1, ["barrel", "furnace", "counter", "smoker", "crafting_table", "counter"]);
+  v.kitchenRow(1, 11, 1, 0, -1, ["fridge", "furnace", "counter", "smoker", "crafting_table", "counter"]);
   v.set(6, 2, 11, "minecraft:flower_pot");
+  v.tv(4, 1, 4, 4, 4, 0, 1);
+  v.lamp(9, 1, 11);
   v.table(3, 1, 8);
   v.seat(2, 1, 8, 1, 0);
   v.seat(4, 1, 8, -1, 0);
@@ -2060,11 +2114,12 @@ function drawApartmentBlock(v) {
   // Furnish every storey once all floors and the roof exist, so nothing is overwritten.
   for (const level of levels) {
     v.fill(4, level + 1, 8, 4, level + 4, 11, p.plank);
-    v.fill(4, level + 2, 9, 4, level + 2, 10, b.tv);
     for (let x = 1; x <= 2; x++) v.seat(x, level + 1, 6, 0, 1, p.sofa);
     v.fill(1, level + 1, 7, 3, level + 1, 9, p.carpet);
+    v.tv(3, level + 1, 9, 3, 10, -1, 0);
     v.set(2, level + 1, 8, p.table);
-    v.kitchenRow(5, 14, level + 1, 0, -1, ["barrel", "furnace", "counter", "crafting_table"]);
+    v.lamp(1, level + 1, 11);
+    v.kitchenRow(5, 14, level + 1, 0, -1, ["fridge", "furnace", "counter", "crafting_table"]);
     v.bed(1, level + 1, 13, 0, 1);
     v.facing(2, level + 1, 14, "minecraft:chest", 0, -1);
     v.fill(9, level + 1, 14, 9, level + 2, 14, "minecraft:bookshelf");
@@ -2263,47 +2318,440 @@ const VILLAGE_LOTS = [
   { col: 2, row: 2, facing: { x: 0, z: -1 }, width: 7, draw: drawStudioCabin }
 ];
 
-function createVillagePlan(player, paletteIndex = 0, prepareGround = true) {
+// ==========================================
+// 🏙️ MODERN CITY (village tool layout)
+// ==========================================
+
+// Towers are 15×15 with four-block storeys; the tallest is 12 storeys, so
+// the city clears and snapshots up to this height above street level.
+const CITY_CLEAR_HEIGHT = 56;
+const CITY_FLOOR_HEIGHT = 4;
+
+const CITY_TOWER_STYLES = [
+  { wall: "minecraft:light_gray_concrete", glass: "minecraft:light_blue_stained_glass", trim: "minecraft:white_concrete" },
+  { wall: "minecraft:white_concrete", glass: "minecraft:glass", trim: "minecraft:light_gray_concrete" },
+  { wall: "minecraft:black_concrete", glass: "minecraft:gray_stained_glass", trim: "minecraft:gray_concrete" },
+  { wall: "minecraft:gray_concrete", glass: "minecraft:cyan_stained_glass", trim: "minecraft:white_concrete" },
+  { wall: "minecraft:terracotta", glass: "minecraft:glass", trim: "minecraft:quartz_block" }
+];
+
+/** Furnishes the four corner rooms of a tower storey; `room` is called with the room's local box and its door side. */
+function towerRooms(v, y, wall, furnish) {
+  const rooms = [
+    { x1: 1, x2: 3, z1: 3, z2: 6, wallX: 4, wallZ: 7, doorX: 2, doorZ: 7, dz: 1 },
+    { x1: 11, x2: 13, z1: 3, z2: 6, wallX: 10, wallZ: 7, doorX: 12, doorZ: 7, dz: 1 },
+    { x1: 1, x2: 3, z1: 12, z2: 15, wallX: 4, wallZ: 11, doorX: 2, doorZ: 11, dz: -1 },
+    { x1: 11, x2: 13, z1: 12, z2: 15, wallX: 10, wallZ: 11, doorX: 12, doorZ: 11, dz: -1 }
+  ];
+  for (const r of rooms) {
+    v.fill(r.wallX, y, r.z1, r.wallX, y + 2, r.z2, wall);
+    v.fill(r.x1, y, r.wallZ, r.x2, y + 2, r.wallZ, wall);
+    v.door(r.doorX, y, r.doorZ, 0, r.dz);
+    furnish(r);
+  }
+}
+
+/** Glass-and-concrete tower with a bubble-column lift core, a lobby and furnished storeys. */
+function drawTower(v, opts) {
+  const { b } = v;
+  const s = CITY_TOWER_STYLES[opts.style % CITY_TOWER_STYLES.length];
+  const floors = opts.floors, fh = CITY_FLOOR_HEIGHT;
+  const x0 = 0, x1 = 14, z0 = 2, z1 = 16;
+  const top = floors * fh;
+  // Forecourt with planters and lamps.
+  v.fill(x0, 0, 0, x1, 0, 1, b.sidewalk);
+  v.fill(x0, 1, 0, x0 + 3, 1, 0, b.leaves);
+  v.fill(x1 - 3, 1, 0, x1, 1, 0, b.leaves);
+  v.lampPost(x0 + 5, 0);
+  v.lampPost(x1 - 5, 0);
+  // Shell, then each storey carved out with glass bands and concrete piers.
+  v.bigFill(x0, 0, z0, x1, top, z1, s.wall);
+  for (let f = 0; f < floors; f++) {
+    const y = f * fh;
+    v.bigFill(x0 + 1, y + 1, z0 + 1, x1 - 1, y + fh - 1, z1 - 1, b.air);
+    v.fill(x0 + 1, y + 1, z0, x1 - 1, y + fh - 1, z0, s.glass);
+    v.fill(x0 + 1, y + 1, z1, x1 - 1, y + fh - 1, z1, s.glass);
+    v.fill(x0, y + 1, z0 + 1, x0, y + fh - 1, z1 - 1, s.glass);
+    v.fill(x1, y + 1, z0 + 1, x1, y + fh - 1, z1 - 1, s.glass);
+    for (const x of [x0 + 5, x1 - 5]) {
+      v.fill(x, y + 1, z0, x, y + fh - 1, z0, s.trim);
+      v.fill(x, y + 1, z1, x, y + fh - 1, z1, s.trim);
+    }
+    for (const z of [z0 + 5, z1 - 5]) {
+      v.fill(x0, y + 1, z, x0, y + fh - 1, z, s.trim);
+      v.fill(x1, y + 1, z, x1, y + fh - 1, z, s.trim);
+    }
+    for (const [x, z] of [[3, 5], [11, 5], [3, 13], [11, 13]]) v.set(x, y + fh, z, b.light);
+  }
+  for (const [x, z] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]) v.fill(x, 1, z, x, top, z, s.trim);
+  // Entrance and canopy.
+  v.door(7, 1, z0, 0, 1);
+  v.fill(5, 3, 0, 9, 3, 1, "minecraft:smooth_stone_slab");
+  // Lift core: a soul sand shaft up and a magma shaft down, with a door on every storey.
+  v.bigFill(5, 1, 8, 9, top - 1, 10, s.wall);
+  v.set(6, 0, 9, "minecraft:soul_sand");
+  v.set(8, 0, 9, "minecraft:magma");
+  const waterTop = (floors - 1) * fh + 1;
+  for (const x of [6, 8]) {
+    v.bigFill(x, 1, 9, x, waterTop, 9, b.water);
+    v.fill(x, waterTop + 1, 9, x, top - 1, 9, b.air);
+  }
+  for (let f = 0; f < floors; f++) {
+    const y = f * fh + 1;
+    v.door(6, y, 8, 0, -1);
+    v.door(8, y, 8, 0, -1);
+    v.set(7, y + 1, 9, b.light);
+  }
+  // Storeys: lobby at street level, then the tower's use.
+  for (let f = 0; f < floors; f++) {
+    const y = f * fh + 1;
+    if (f === 0) {
+      for (let x = 5; x <= 9; x++) v.table(x, y, 13);
+      v.seat(7, y, 14, 0, -1);
+      v.computer(7, y + 1, 13, 0, 1);
+      for (let z = 4; z <= 6; z++) v.seat(1, y, z, 1, 0, v.p.sofa);
+      v.fill(2, y, 4, 3, y, 6, v.p.carpet);
+      v.tv(4, y, 5, 4, 5, -1, 0);
+      v.lamp(1, y, 3);
+      v.table(12, y, 5);
+      v.seat(11, y, 5, 1, 0);
+      v.seat(13, y, 5, -1, 0);
+      v.lamp(13, y, 7);
+      for (const [x, z] of [[1, 15], [13, 15], [13, 3]]) v.set(x, y, z, b.leaves);
+    } else if (opts.use === "office") {
+      for (const z of [4, 12]) {
+        for (const x of [1, 2, 3, 11, 12, 13]) {
+          v.table(x, y, z);
+          v.computer(x, y + 1, z, 0, 1);
+          v.seat(x, y, z + 1, 0, -1);
+        }
+      }
+      v.lamp(1, y, 15);
+      v.lamp(13, y, 15);
+      v.fill(5, y, 15, 9, y + 1, 15, "minecraft:bookshelf");
+      v.table(7, y, 6);
+      v.seat(6, y, 6, 1, 0);
+      v.seat(8, y, 6, -1, 0);
+    } else if (opts.use === "hotel") {
+      towerRooms(v, y, s.wall, (r) => {
+        const front = r.dz === 1;
+        v.bed(r.x1, y, front ? r.z1 + 1 : r.z2 - 1, 0, front ? -1 : 1);
+        v.tv(r.x1, y, front ? r.z2 : r.z1, r.x1, front ? r.z2 : r.z1, 0, front ? -1 : 1);
+        v.lamp(r.x2, y, front ? r.z1 : r.z2);
+        v.facing(r.x2, y, front ? r.z2 : r.z1, "minecraft:chest", -1, 0);
+        v.fill(r.x1 + 1, y, front ? r.z1 : r.z2 - 1, r.x2 - 1, y, front ? r.z1 + 1 : r.z2, v.p.carpet);
+      });
+    } else {
+      towerRooms(v, y, s.wall, (r) => {
+        const front = r.dz === 1;
+        v.bed(r.x1, y, front ? r.z1 + 1 : r.z2 - 1, 0, front ? -1 : 1);
+        v.fridge(r.x2, y, front ? r.z1 : r.z2, 0, front ? 1 : -1);
+        v.table(r.x2, y, front ? r.z2 - 1 : r.z1 + 1);
+        v.seat(r.x2 - 1, y, front ? r.z2 - 1 : r.z1 + 1, 1, 0);
+        v.tv(r.x1, y, front ? r.z2 : r.z1, r.x1, front ? r.z2 : r.z1, 0, front ? -1 : 1);
+        v.lamp(r.x2, y, front ? r.z2 : r.z1);
+      });
+    }
+  }
+  // Roof: parapet, plant room and either an aerial or a beacon spire.
+  v.fill(x0, top + 1, z0, x1, top + 1, z0, s.trim);
+  v.fill(x0, top + 1, z1, x1, top + 1, z1, s.trim);
+  v.fill(x0, top + 1, z0, x0, top + 1, z1, s.trim);
+  v.fill(x1, top + 1, z0, x1, top + 1, z1, s.trim);
+  v.fill(5, top + 1, 8, 9, top + 2, 10, s.wall);
+  for (const [x, z] of [[2, 4], [12, 4], [2, 14], [12, 14]]) v.set(x, top + 1, z, b.light);
+  if (opts.landmark) {
+    v.fill(6, top + 3, 8, 8, top + 3, 10, "minecraft:iron_block");
+    v.set(7, top + 4, 9, "minecraft:beacon");
+    for (const [x, z] of [[6, 8], [8, 8], [6, 10], [8, 10]]) v.fill(x, top + 4, z, x, top + 6, z, "minecraft:end_rod");
+  } else {
+    v.fill(7, top + 3, 9, 7, top + 6, 9, "minecraft:end_rod");
+  }
+}
+
+/** Two-storey shopping mall with an atrium, skylight, stalls, a food court and a fountain. */
+function drawMall(v) {
+  const { p, b } = v;
+  v.fill(0, 0, 0, 16, 0, 1, b.sidewalk);
+  v.lampPost(1, 0);
+  v.lampPost(15, 0);
+  v.room(0, 2, 16, 16, 0, 9, p.wall, p.floor);
+  v.fill(1, 5, 3, 15, 5, 15, p.upperFloor);
+  v.fill(5, 5, 7, 11, 5, 13, b.air);
+  v.fill(4, 6, 6, 12, 6, 6, p.fence);
+  v.fill(4, 6, 14, 12, 6, 14, p.fence);
+  v.fill(4, 6, 7, 4, 6, 13, p.fence);
+  v.fill(12, 6, 7, 12, 6, 13, p.fence);
+  v.fill(0, 10, 2, 16, 10, 16, p.roof);
+  v.fill(5, 10, 7, 11, 10, 13, b.glass);
+  v.fill(1, 1, 2, 15, 3, 2, b.glass);
+  v.fill(1, 6, 2, 15, 8, 2, b.glass);
+  v.fill(0, 4, 2, 16, 4, 2, p.accent);
+  v.fill(0, 9, 2, 16, 9, 2, p.accent);
+  for (const z of [5, 9, 13]) {
+    v.fill(0, 1, z, 0, 3, z + 2, b.glass);
+    v.fill(16, 1, z, 16, 3, z + 2, b.glass);
+    v.fill(0, 6, z, 0, 8, z + 2, b.glass);
+    v.fill(16, 6, z, 16, 8, z + 2, b.glass);
+  }
+  v.door(7, 1, 2, 0, 1);
+  v.door(9, 1, 2, 0, 1);
+  v.fill(3, 4, 1, 13, 4, 1, p.slab);
+  // Fountain in the atrium.
+  v.fill(6, 1, 8, 10, 1, 12, b.stoneBricks);
+  v.fill(7, 0, 9, 9, 0, 11, b.water);
+  v.fill(7, 1, 9, 9, 1, 11, b.air);
+  v.set(8, 0, 10, b.light);
+  // Ground-floor stalls along both sides.
+  for (const z of [4, 8, 12]) {
+    for (const x of [1, 15]) v.fill(x, 1, z, x, 2, z + 2, "minecraft:bookshelf");
+    for (let n = 0; n <= 2; n++) {
+      v.table(3, 1, z + n);
+      v.table(13, 1, z + n);
+    }
+    v.seat(4, 1, z + 1, -1, 0);
+    v.seat(12, 1, z + 1, 1, 0);
+    v.lamp(2, 1, z + 3 > 15 ? 15 : z + 3);
+    v.lamp(14, 1, z + 3 > 15 ? 15 : z + 3);
+  }
+  for (const [x, z] of [[4, 6], [12, 6], [4, 14], [12, 14]]) v.set(x, 1, z, b.leaves);
+  // Escalator-style steps to the upper floor and the food court up there.
+  for (let step = 0; step < 4; step++) {
+    v.fill(13, 1 + step, 3 + step, 14, 1 + step, 3 + step, p.plank);
+    v.fill(13, 2 + step, 3 + step, 14, 3 + step, 3 + step, b.air);
+  }
+  v.fill(13, 5, 3, 14, 5, 6, b.air);
+  v.fill(12, 6, 3, 12, 6, 5, p.fence);
+  v.kitchenRow(5, 15, 6, 0, -1, ["fridge", "furnace", "counter", "smoker", "counter", "furnace", "fridge"]);
+  for (const [x, z] of [[2, 8], [2, 11], [14, 8], [14, 11], [7, 13], [10, 13]]) {
+    v.table(x, 6, z);
+    v.seat(x - 1, 6, z, 1, 0);
+    v.seat(x + 1, 6, z, -1, 0);
+  }
+  v.tv(8, 6, 3, 8, 3, 0, 1);
+  for (let x = 6; x <= 10; x += 4) v.seat(x, 6, 4, 0, -1, p.sofa);
+  for (const [x, z] of [[3, 7], [13, 7], [3, 13], [13, 13]]) v.set(x, 5, z, b.light);
+  for (const [x, z] of [[3, 5], [13, 5], [3, 15], [13, 15]]) v.set(x, 10, z, b.light);
+  v.set(8, 9, 15, b.hangingLantern);
+}
+
+/** Three-storey city hall with a colonnade, council chamber, offices, library and clock tower. */
+function drawCityHall(v) {
+  const { p, b } = v;
+  v.fill(0, 0, 0, 16, 0, 3, b.sidewalk);
+  v.fill(5, 0, 2, 11, 0, 3, p.accent);
+  for (const x of [2, 6, 10, 14]) v.fill(x, 1, 2, x, 6, 2, "minecraft:quartz_block");
+  v.room(0, 4, 16, 16, 0, 8, p.accent, p.floor);
+  v.fill(0, 7, 2, 16, 7, 3, p.roof);
+  v.fill(1, 4, 5, 15, 4, 15, p.upperFloor);
+  for (let step = 0; step < 3; step++) {
+    v.fill(13, 1 + step, 6 + step, 14, 1 + step, 6 + step, p.plank);
+    v.fill(13, 2 + step, 6 + step, 14, 3 + step, 6 + step, b.air);
+  }
+  v.fill(13, 4, 6, 14, 4, 9, b.air);
+  v.fill(12, 5, 6, 12, 5, 9, p.fence);
+  for (const y of [2, 6]) {
+    v.fill(2, y, 4, 4, y + 1, 4, b.glass);
+    v.fill(12, y, 4, 14, y + 1, 4, b.glass);
+    v.fill(0, y, 7, 0, y + 1, 13, b.glass);
+    v.fill(16, y, 7, 16, y + 1, 13, b.glass);
+    v.fill(3, y, 16, 13, y + 1, 16, b.glass);
+  }
+  v.fill(6, 6, 4, 10, 7, 4, b.glass);
+  v.door(7, 1, 4, 0, 1);
+  v.door(9, 1, 4, 0, 1);
+  v.fill(0, 9, 4, 16, 9, 16, p.roof);
+  v.fill(0, 9, 3, 16, 9, 3, p.slab);
+  v.fill(7, 10, 9, 9, 13, 11, p.accent);
+  v.set(8, 14, 10, "minecraft:bell");
+  v.fill(2, 10, 6, 2, 14, 6, p.fence);
+  v.fill(3, 13, 6, 4, 14, 6, "minecraft:blue_wool");
+  // Ground floor: reception and council chamber.
+  for (let x = 7; x <= 9; x++) v.table(x, 1, 6);
+  v.computer(8, 2, 6, 0, 1);
+  v.seat(8, 1, 7, 0, -1);
+  for (let x = 6; x <= 10; x++) {
+    v.table(x, 1, 11);
+    v.seat(x, 1, 10, 0, 1);
+    v.seat(x, 1, 12, 0, -1);
+  }
+  v.fill(1, 1, 8, 1, 2, 12, "minecraft:bookshelf");
+  v.fill(15, 1, 8, 15, 2, 12, "minecraft:bookshelf");
+  v.lamp(2, 1, 6);
+  v.lamp(14, 1, 6);
+  v.fill(3, 1, 14, 5, 1, 14, p.carpet);
+  v.fill(11, 1, 14, 13, 1, 14, p.carpet);
+  // Upper floor: offices and a library lounge.
+  for (const x of [2, 3, 4, 12]) {
+    v.table(x, 5, 7);
+    v.computer(x, 6, 7, 0, 1);
+    v.seat(x, 5, 8, 0, -1);
+  }
+  v.fill(1, 5, 10, 1, 6, 14, "minecraft:bookshelf");
+  v.fill(15, 5, 10, 15, 6, 14, "minecraft:bookshelf");
+  for (let x = 6; x <= 10; x++) v.seat(x, 5, 13, 0, -1, p.sofa);
+  v.tv(8, 5, 11, 8, 11, 0, 1);
+  v.lamp(5, 5, 13);
+  v.lamp(11, 5, 13);
+  for (const [x, z] of [[4, 8], [12, 8], [8, 13]]) {
+    v.set(x, 4, z, b.light);
+    v.set(x, 9, z, b.light);
+  }
+}
+
+/** Restaurant with a bar, kitchen, dining room and a rooftop terrace under a pergola. */
+function drawRestaurant(v) {
+  const { p, b } = v;
+  v.fill(0, 0, 0, 14, 0, 1, b.sidewalk);
+  for (const x of [2, 12]) {
+    v.table(x, 1, 1);
+    v.seat(x - 1, 1, 1, 1, 0);
+    v.seat(x + 1, 1, 1, -1, 0);
+  }
+  v.room(0, 2, 14, 14, 0, 4, p.wall, p.floor);
+  v.fill(1, 1, 2, 13, 3, 2, b.glass);
+  v.fill(0, 4, 2, 14, 4, 2, p.accent);
+  v.fill(0, 2, 4, 0, 3, 12, b.glass);
+  v.fill(14, 2, 4, 14, 3, 12, b.glass);
+  v.door(7, 1, 2, 0, 1);
+  v.fill(2, 4, 1, 12, 4, 1, p.slab);
+  v.kitchenRow(1, 13, 1, 0, -1, ["fridge", "furnace", "counter", "smoker", "counter", "furnace", "fridge"]);
+  for (let x = 4; x <= 10; x++) {
+    v.table(x, 1, 11);
+    v.seat(x, 1, 10, 0, 1);
+  }
+  for (const [x, z] of [[2, 5], [2, 8], [6, 5], [10, 5], [12, 8]]) {
+    v.table(x, 1, z);
+    v.seat(x - 1, 1, z, 1, 0);
+    v.seat(x + 1, 1, z, -1, 0);
+  }
+  v.lamp(1, 1, 3);
+  v.lamp(13, 1, 3);
+  v.fill(1, 1, 12, 1, 2, 12, "minecraft:bookshelf");
+  v.set(13, 1, 12, "minecraft:cake");
+  for (const [x, z] of [[3, 6], [11, 6], [7, 10]]) v.set(x, 5, z, b.light);
+  // Rooftop terrace: railing, internal stairs, pergola and tables.
+  v.fill(0, 5, 2, 14, 5, 14, p.upperFloor);
+  v.fill(0, 6, 2, 14, 6, 2, p.fence);
+  v.fill(0, 6, 14, 14, 6, 14, p.fence);
+  v.fill(0, 6, 3, 0, 6, 13, p.fence);
+  v.fill(14, 6, 3, 14, 6, 13, p.fence);
+  for (let step = 0; step < 4; step++) {
+    v.fill(12, 1 + step, 3 + step, 13, 1 + step, 3 + step, p.plank);
+    v.fill(12, 2 + step, 3 + step, 13, 3 + step, 3 + step, b.air);
+  }
+  v.fill(12, 5, 3, 13, 5, 6, b.air);
+  v.fill(11, 6, 3, 11, 6, 6, p.fence);
+  for (const [x, z] of [[1, 8], [13, 8], [1, 13], [13, 13]]) v.fill(x, 6, z, x, 8, z, p.trim);
+  v.fill(1, 9, 8, 13, 9, 13, p.slab);
+  for (const [x, z] of [[4, 10], [10, 10]]) v.set(x, 8, z, b.hangingLantern);
+  for (const [x, z] of [[3, 5], [3, 10], [8, 5], [8, 11]]) {
+    v.table(x, 6, z);
+    v.seat(x - 1, 6, z, 1, 0);
+    v.seat(x + 1, 6, z, -1, 0);
+  }
+  for (const [x, z] of [[1, 3], [10, 3], [1, 7], [13, 11]]) v.set(x, 6, z, b.leaves);
+  v.lamp(5, 6, 13);
+  v.lamp(13, 6, 3);
+}
+
+/** City park with a fountain, paths, trees, flower beds, benches and lamps. */
+function drawCityPark(v) {
+  const { b } = v;
+  v.fill(0, 0, 0, 16, 0, 16, b.grass);
+  v.fill(8, 0, 0, 8, 0, 16, b.path);
+  v.fill(0, 0, 8, 16, 0, 8, b.path);
+  v.fill(5, 0, 5, 11, 0, 11, b.plazaInner);
+  v.fill(6, -1, 6, 10, -1, 10, b.stoneBricks);
+  v.fill(7, 0, 7, 9, 0, 9, b.water);
+  v.fill(6, 1, 6, 10, 1, 10, b.stoneBricks);
+  v.fill(7, 1, 7, 9, 1, 9, b.air);
+  v.set(8, 1, 8, b.stoneBricks);
+  v.set(8, 0, 8, b.light);
+  v.set(8, 2, 8, b.water);
+  for (const [x, z] of [[2, 2], [14, 2], [2, 14], [14, 14], [2, 11], [14, 5]]) v.tree(x, z);
+  v.fill(1, 1, 5, 2, 1, 7, "minecraft:poppy");
+  v.fill(14, 1, 9, 15, 1, 11, "minecraft:dandelion");
+  v.fill(5, 1, 14, 7, 1, 15, "minecraft:poppy");
+  v.fill(9, 1, 1, 11, 1, 2, "minecraft:dandelion");
+  for (let n = 7; n <= 9; n++) {
+    v.seat(n, 1, 4, 0, 1);
+    v.seat(n, 1, 12, 0, -1);
+    v.seat(4, 1, n, 1, 0);
+    v.seat(12, 1, n, -1, 0);
+  }
+  for (const [x, z] of [[5, 5], [11, 5], [5, 11], [11, 11]]) v.lampPost(x, z);
+  v.lampPost(1, 8);
+  v.lampPost(15, 8);
+}
+
+const CITY_LOTS = [
+  { col: 0, row: 0, facing: { x: 0, z: 1 }, width: 15, draw: (v) => drawTower(v, { floors: 10, use: "office", style: 0 }) },
+  { col: 1, row: 0, facing: { x: 0, z: 1 }, width: 17, draw: drawMall },
+  { col: 2, row: 0, facing: { x: 0, z: 1 }, width: 15, draw: (v) => drawTower(v, { floors: 7, use: "hotel", style: 1 }) },
+  { col: 0, row: 1, facing: { x: 1, z: 0 }, width: 15, draw: (v) => drawTower(v, { floors: 8, use: "apartments", style: 2 }) },
+  { col: 1, row: 1, facing: { x: 0, z: 1 }, width: 17, draw: drawCityPark },
+  { col: 2, row: 1, facing: { x: -1, z: 0 }, width: 15, draw: drawRestaurant },
+  { col: 0, row: 2, facing: { x: 0, z: -1 }, width: 15, draw: (v) => drawTower(v, { floors: 12, use: "office", style: 3, landmark: true }) },
+  { col: 1, row: 2, facing: { x: 0, z: -1 }, width: 17, draw: drawCityHall },
+  { col: 2, row: 2, facing: { x: 0, z: -1 }, width: 15, draw: (v) => drawTower(v, { floors: 5, use: "apartments", style: 4 }) }
+];
+
+const VILLAGE_LAYOUTS = [
+  { key: "village", name: "🏘️ Modern Village (houses, cafe, farms)", title: "Modern Village", lots: VILLAGE_LOTS, clearHeight: VILLAGE_CLEAR_HEIGHT,
+    summary: "four furnished houses, a three-storey apartment block, a cafe with a flat, two farms, and a plaza with a well",
+    done: "🏘️ Modern village completed! Four houses, apartments, a cafe, two farms and a well await." },
+  { key: "city", name: "🏙️ Modern City (skyscrapers, mall, park)", title: "Modern City", lots: CITY_LOTS, clearHeight: CITY_CLEAR_HEIGHT,
+    summary: "five skyscrapers up to twelve storeys with bubble-column lifts, a shopping mall, a city hall, a restaurant with a rooftop terrace, and a park with a fountain",
+    done: "🏙️ Modern city completed! Ride the lifts in the towers (door in, float up, door out) and look for the beacon on the tallest one." }
+];
+
+function createVillagePlan(player, paletteIndex = 0, prepareGround = true, layoutKey = "village", furniture = true) {
   const palette = VILLAGE_PALETTES[paletteIndex] || VILLAGE_PALETTES[0];
+  const layout = VILLAGE_LAYOUTS.find((l) => l.key === layoutKey) || VILLAGE_LAYOUTS[0];
   const b = VILLAGE_SHARED_BLOCKS;
   const c = createOrientedBuildContext(player, VILLAGE_SIZE, VILLAGE_SIZE, -1);
   const end = VILLAGE_SIZE - 1;
   const q = [];
   if (prepareGround) {
-    pushLargeFill(q, c, 0, 1, 0, end, VILLAGE_CLEAR_HEIGHT, end, b.air);
+    pushLargeFill(q, c, 0, 1, 0, end, layout.clearHeight, end, b.air);
     pushLargeFill(q, c, 0, -VILLAGE_FOUNDATION_DEPTH, 0, end, -1, end, b.dirt, "keep");
     pushLargeFill(q, c, 0, 0, 0, end, 0, end, b.grass);
   }
   drawVillageRoads(c, q, b, palette);
-  for (const lot of VILLAGE_LOTS) {
-    const builder = new VillageBuilder(createLotContext(c, lot.col, lot.row, lot.facing, lot.width), palette, b);
+  for (const lot of layout.lots) {
+    const builder = new VillageBuilder(createLotContext(c, lot.col, lot.row, lot.facing, lot.width), palette, b, { furniture });
     lot.draw(builder);
     q.push(...builder.q);
   }
-  const plan = makePlan(player, "Modern Village", c, q,
-    localBounds(c, 0, -VILLAGE_FOUNDATION_DEPTH, 0, end, VILLAGE_CLEAR_HEIGHT, end));
+  const plan = makePlan(player, layout.title, c, q,
+    localBounds(c, 0, -VILLAGE_FOUNDATION_DEPTH, 0, end, layout.clearHeight, end));
   plan.batchSize = VILLAGE_BATCH_SIZE;
   plan.palette = palette.name;
+  plan.layout = layout.key;
   return plan;
 }
 
 function openVillageBuilderMenu(player) {
   const form = new ModalFormData()
-    .title("🏘️ Build a Modern Village")
+    .title("🏘️ Build a Village or City")
+    .dropdown("What to build:", VILLAGE_LAYOUTS.map((layout) => layout.name), { defaultValueIndex: 0 })
     .dropdown("Colour scheme:", VILLAGE_PALETTES.map((palette) => palette.name), { defaultValueIndex: 0 })
+    .toggle("🪑 Use Helper Tools furniture (chairs, sofas, TVs, lamps)", { defaultValue: true })
     .toggle("Flatten and prepare the ground first (recommended)", { defaultValue: true })
     .toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
   form.show(player).then((response) => {
     if (response.canceled) return;
-    const [paletteIndex, prepareGround, showGuide] = response.formValues;
-    const plan = createVillagePlan(player, Number(paletteIndex), Boolean(prepareGround));
+    const [layoutIndex, paletteIndex, furniture, prepareGround, showGuide] = response.formValues;
+    const layout = VILLAGE_LAYOUTS[layoutIndex] || VILLAGE_LAYOUTS[0];
+    const plan = createVillagePlan(player, Number(paletteIndex), Boolean(prepareGround), layout.key, Boolean(furniture));
     if (!validateBuildBounds(player, plan.bounds)) return;
     const confirm = () => {
-      player.sendMessage("§eThe village is built over a few seconds. Please stay in this dimension.§r");
-      executeBuildPlan(player, plan, "village", "🏘️ Modern village completed! Four houses, apartments, a cafe, two farms and a well await.", "dig.wood");
+      player.sendMessage(`§eThe ${layout.title.toLowerCase()} is built over a few seconds. Please stay in this dimension.§r`);
+      executeBuildPlan(player, plan, layout.key, layout.done, "dig.wood");
     };
-    const prompt = `Build a ${VILLAGE_SIZE}×${VILLAGE_SIZE} modern village (${plan.palette}) here?\n\n` +
-      "It has four furnished houses, a three-storey apartment block, a cafe with a flat, two farms, and a plaza with a well. " +
+    const prompt = `Build a ${VILLAGE_SIZE}×${VILLAGE_SIZE} ${layout.title.toLowerCase()} (${plan.palette}) here?\n\n` +
+      `It has ${layout.summary}. ` +
       (prepareGround ? "The ground inside the box is flattened first." : "The ground is left as it is, so pick flat land.");
     if (showGuide) startPreview(player, plan.bounds, "minecraft:villager_happy", prompt, confirm);
     else confirm();
@@ -2401,7 +2849,8 @@ function drawCottage(v) {
   // Furniture.
   v.bed(2, 1, 7, 0, 1);
   v.facing(3, 1, 8, "minecraft:chest", 0, -1);
-  v.kitchenRow(6, 8, 1, 0, -1, ["furnace", "crafting_table", "barrel"]);
+  v.kitchenRow(6, 8, 1, 0, -1, ["furnace", "crafting_table", "fridge"]);
+  v.lamp(2, 1, 3);
   v.fill(3, 1, 3, 7, 1, 4, p.carpet);
   v.table(5, 1, 5);
   v.seat(4, 1, 5, 1, 0);
@@ -2438,7 +2887,8 @@ function drawAFrameCabin(v) {
   // Furniture.
   v.bed(1, 1, 7, 0, 1);
   v.facing(2, 1, 8, "minecraft:chest", 0, -1);
-  v.kitchenRow(5, 8, 1, 0, -1, ["furnace", "crafting_table", "barrel"]);
+  v.kitchenRow(5, 8, 1, 0, -1, ["furnace", "crafting_table", "fridge"]);
+  v.lamp(6, 1, 7);
   for (let z = 3; z <= 4; z++) v.seat(2, 1, z, 1, 0, p.sofa);
   v.fill(3, 1, 3, 5, 1, 5, p.carpet);
   v.set(4, 1, 4, p.table);
@@ -2485,11 +2935,12 @@ function drawModernVilla(v) {
   v.fill(3, 6, 4, 3, 6, 7, p.fence);
   // Ground floor: lounge, kitchen and dining.
   v.fill(7, 1, 4, 7, 4, 6, p.plank);
-  v.fill(7, 2, 4, 7, 2, 5, b.tv);
   v.fill(8, 1, 4, 11, 1, 6, p.carpet);
+  v.tv(8, 1, 4, 8, 5, 1, 0);
   for (let z = 4; z <= 5; z++) v.seat(11, 1, z, -1, 0, p.sofa);
   v.set(9, 1, 5, p.table);
-  v.kitchenRow(1, 11, 1, 0, -1, ["barrel", "furnace", "counter", "smoker", "counter", "crafting_table"]);
+  v.lamp(11, 1, 3);
+  v.kitchenRow(1, 11, 1, 0, -1, ["fridge", "furnace", "counter", "smoker", "counter", "crafting_table"]);
   v.table(9, 1, 9);
   v.seat(8, 1, 9, 1, 0);
   v.seat(10, 1, 9, -1, 0);
@@ -2559,12 +3010,12 @@ const HOUSE_DESIGNS = [
   { key: "family_home", name: "Family Home 🏘️", size: "13×14", description: "Two storeys with three bedrooms and a kitchen", width: 11, draw: drawFamilyHome }
 ];
 
-function createHouseDesignPlan(player, designKey, paletteIndex = 0) {
+function createHouseDesignPlan(player, designKey, paletteIndex = 0, furniture = true) {
   const design = HOUSE_DESIGNS.find((d) => d.key === designKey);
   if (!design) return null;
   const palette = HOUSE_PALETTES[paletteIndex] || HOUSE_PALETTES[0];
   const c = createOrientedBuildContext(player, design.width, 1, -1);
-  const builder = new VillageBuilder(c, palette, VILLAGE_SHARED_BLOCKS);
+  const builder = new VillageBuilder(c, palette, VILLAGE_SHARED_BLOCKS, { furniture });
   design.draw(builder);
   const plan = makePlan(player, design.name.replace(/\s\S+$/, ""), c, builder.q, boundsFromCommands(builder.q));
   plan.batchSize = VILLAGE_BATCH_SIZE;
@@ -2590,11 +3041,12 @@ function openHouseStyleMenu(player, design) {
   const form = new ModalFormData()
     .title(`🏡 ${design.name}`)
     .dropdown("Style and materials:", HOUSE_PALETTES.map((palette) => palette.name), { defaultValueIndex: 0 })
+    .toggle("🪑 Use Helper Tools furniture (chairs, sofas, TVs, lamps)", { defaultValue: true })
     .toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
   form.show(player).then((response) => {
     if (response.canceled) return;
-    const [paletteIndex, showGuide] = response.formValues;
-    const plan = createHouseDesignPlan(player, design.key, Number(paletteIndex));
+    const [paletteIndex, furniture, showGuide] = response.formValues;
+    const plan = createHouseDesignPlan(player, design.key, Number(paletteIndex), Boolean(furniture));
     if (!plan || !validateBuildBounds(player, plan.bounds)) return;
     const confirm = () => executeBuildPlan(player, plan, `house_${design.key}`, `🏡 ${design.name} completed in the ${plan.palette} style!`, "dig.wood");
     if (showGuide) {

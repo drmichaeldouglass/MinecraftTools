@@ -1,0 +1,35 @@
+{
+  "resource_pack_name": "helper_tools",
+  "texture_name": "atlas.terrain",
+  "padding": 8,
+  "num_mip_levels": 4,
+  "texture_data": {
+    "tools_wood": {
+      "textures": "textures/blocks/tools_wood"
+    },
+    "tools_cushion": {
+      "textures": "textures/blocks/tools_cushion"
+    },
+    "tools_fabric": {
+      "textures": "textures/blocks/tools_fabric"
+    },
+    "tools_metal": {
+      "textures": "textures/blocks/tools_metal"
+    },
+    "tools_fridge_front": {
+      "textures": "textures/blocks/tools_fridge_front"
+    },
+    "tools_frame": {
+      "textures": "textures/blocks/tools_frame"
+    },
+    "tools_screen": {
+      "textures": "textures/blocks/tools_screen"
+    },
+    "tools_shade": {
+      "textures": "textures/blocks/tools_shade"
+    },
+    "tools_keyboard": {
+      "textures": "textures/blocks/tools_keyboard"
+    }
+  }
+}
