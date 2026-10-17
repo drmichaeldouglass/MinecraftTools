@@ -10,7 +10,7 @@ It was made with younger players in mind, so every option is a big labelled butt
 
 ## ✨ What the add-on does
 
-The Helper Device menu has six sections.
+The Helper Device menu has seven sections.
 
 | Section | What's inside |
 | --- | --- |
@@ -20,6 +20,7 @@ The Helper Device menu has six sections.
 | 🏗️ **Builder Tools** | Dig, fill, flatten, platforms, houses, a whole village or city, shapes and beacons, swimming pools, draining water and lava, redstone contraptions, bridges, stairs, torches, cleanup, undo |
 | 📍 **Spawn & Teleport** | Set and return to spawn, teleport to players, find biomes and structures, go to coordinates |
 | 🐾 **Pets & Companions** | Tame dog, cat, parrot, saddled horse, iron golem, axolotl |
+| ✨ **Enchant & Armour** | Enchant the item in your hand, full armour sets, enchanted tool kits, armour trim kits |
 
 ### 🎮 Game Modes & Time
 - ☀️ **Set Daytime** and 🌙 **Set Nighttime**
@@ -37,6 +38,7 @@ The Helper Device menu has six sections.
 - 👀 **Night Vision** for 15 minutes.
 - 🏃 **Super Speed & Jump**: Speed II and Jump Boost II for 5 minutes.
 - 🪽 **Elytra & Flight Kit**: an Elytra and 64 firework rockets.
+- ⭐ **Gain 30 XP Levels**: experience to spend on enchanting.
 
 ### 🏗️ Builder Tools
 Builds are placed in front of you, in the direction you are facing.
@@ -53,7 +55,7 @@ Builds are placed in front of you, in the direction you are facing.
 | 🔷 **Shapes & Beacons** | Sphere, dome, stepped pyramid, cylinder or tower (height 1 gives a disc or ring) and cone, solid or hollow, in any block from the list or a typed block ID. Radius up to 25, pyramid base up to 61. Plus a working beacon on a 1 to 4 level pyramid of iron, gold, emerald, diamond, netherite or a rainbow mix, with an optional coloured beam and the sky above cleared. |
 | 🏊 **Swimming Pool** | Pool 1 to 25 blocks wide and long, 1 to 6 deep, sunk into the ground with the water level with the surface. Six tile colours, five deck materials (or none), underwater sea lanterns and a diving board. |
 | 🌊 **Drain Water & Lava** | Removes water, lava or both within 3 to 25 blocks of you. Undoable. |
-| ⚡ **Redstone Contraptions** | Six working machines: an Automatic Door (iron door opened by pressure plates or buttons), a Bubble Elevator (soul sand water lift up a glass tower, 3 to 60 blocks, with an optional magma shaft down), a Firework Launcher (1 to 9 dispensers loaded with rockets, fired by one button), an Auto Sugar Cane Farm (observers and pistons harvest into a chest, 2 to 8 rows), Night Lamps (lamp posts around you that switch on at dusk) and a Powered Railway (5 to 60 blocks of powered track plus a minecart) |
+| ⚡ **Redstone Contraptions** | Twelve working machines: Automatic Door (iron door opened by plates or buttons), Bubble Elevator (soul sand lift up a glass tower with an optional magma shaft down), Firework Launcher (up to 9 dispensers fired by one button), Auto Sugar Cane or Bamboo Farm (observers and pistons into a chest), Spawner XP Farm (dark spawner room with water flush and a kill slot; you get a zombie or skeleton spawn egg to set the spawner), Flood Wheat Farm (press a button to wash the harvest into a chest), Auto Wool Farm (a dispenser shears a sheep whenever it eats), Cobblestone Generator, Auto Smelter (three hopper-fed furnaces), Infinite Water Source, Night Lamps (lamp posts that switch on at dusk) and Powered Railway (powered track plus a minecart) |
 | 🌉 **Bridge & Stair Builder** | Bridges 3 to 50 blocks long with optional railings; staircases up or down, 1, 3 or 5 blocks wide, with optional headroom clearing |
 | 💡 **Light Up Area** | Places torches in a grid on the ground around you so monsters can't spawn |
 | 🧹 **Area Cleanup** | Removes dropped items, XP orbs, arrows, boats and minecarts or hostile mobs within 10 to 100 blocks. Players, pets, villagers and friendly mobs are protected. |
@@ -70,6 +72,12 @@ Every teleport loads the destination first and puts you on solid ground with hea
 
 ### 🐾 Pets & Companions
 - 🐕 Tamed dog, 🐈 tamed cat, 🦜 tamed parrot, 🐴 tamed horse with a saddle, 🦾 iron golem bodyguard and 🦎 axolotl.
+
+### ✨ Enchant & Armour
+- ✨ **Enchant Item in Hand**: hold any enchantable item, pick from the enchantments it can take and a level up to the normal maximum, or add every compatible enchantment at its top level in one go.
+- 🛡️ **Full Armour Set**: leather, chainmail, iron, gold, diamond or netherite, optionally enchanted (Protection IV, Unbreaking III, Mending, Respiration, Aqua Affinity, Thorns, Swift Sneak, Feather Falling IV, Depth Strider) and put on straight away.
+- ⚒️ **Enchanted Tool Kit**: sword, pickaxe, axe, shovel and bow in your chosen material, optionally enchanted (Sharpness V, Looting III, Efficiency V, Fortune III, Silk Touch, Power V, Infinity, Unbreaking III, Mending).
+- 🎨 **Armour Trim Kit**: choose one of the 18 trim patterns and a trim material (iron, copper, gold, lapis, emerald, diamond, netherite, redstone, amethyst, quartz or resin). Minecraft gives add-ons no way to apply a trim directly, so the device hands you the smithing templates, the material and a smithing table: put a template, an armour piece and the material in the table's three slots to apply it.
 
 ---
 
@@ -152,6 +160,8 @@ For the **Modern Village** or **Modern City**, find a reasonably open area, leav
 Houses, the village and the city are furnished with the add-on's own furniture blocks: chairs, sofas, tables, floor lamps (they give off light), televisions, fridges and computers. You can also place them yourself from the Construction tab of the Creative inventory; they turn to face you when placed. If you would rather use plain Minecraft blocks (stairs for seats, fences for tables), turn off **Use Helper Tools furniture** in the house or village form.
 
 Shapes rest on the ground at your feet and start one block in front of you, so stand back from where you want the middle to be. Large hollow spheres and cones are placed over a few seconds. A **Beacon** only shines when nothing solid is straight above it, so leave **Clear the sky** on unless you are already outdoors. After it is built, tap the beacon block to pick its power.
+
+The **Spawner XP Farm** needs one step from you: walk in, tap the spawner with the spawn egg the device gives you, then stand at the gap outside and hit the mobs' legs. The **Flood Wheat Farm** is harvested by pressing the button at the back; press it again to take the water back, then replant.
 
 The **Swimming Pool** is dug into the ground in front of you, so stand on flat land at the level you want the deck. **Drain Water & Lava** clears a cube around you; water from outside the cube can flow back in, so drain a little wider than the pond you want gone.
 

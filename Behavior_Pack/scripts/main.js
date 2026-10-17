@@ -1,4 +1,4 @@
-import { world, system, ItemStack, BiomeTypes } from "@minecraft/server";
+import { world, system, ItemStack, BiomeTypes, EnchantmentTypes } from "@minecraft/server";
 import { ActionFormData, ModalFormData, MessageFormData } from "@minecraft/server-ui";
 
 const ITEM_ID = "tools:helper_device";
@@ -378,6 +378,7 @@ function openMainMenu(player) {
     .button("🏗️ Builder Tools\n§7Bases, Bridges, Stairs, and Cleanup", "textures/items/diamond_pickaxe")
     .button("📍 Spawn & Teleport\n§7Spawn, Friends, Biomes, and Structures", "textures/items/compass_item")
     .button("🐾 Pets & Companions\n§7Spawn Dog, Cat, Horse, Golem", "textures/items/bone")
+    .button("✨ Enchant & Armour\n§7Enchant items, armour and tool kits, trims", "textures/items/book_enchanted")
     .button("🎁 Get Extra Helper Device\n§7Give another wand to inventory", "textures/items/helper_device");
 
   form.show(player).then((response) => {
@@ -403,6 +404,9 @@ function openMainMenu(player) {
         openPetsMenu(player);
         break;
       case 6:
+        openEnchantMenu(player);
+        break;
+      case 7:
         giveExtraDevice(player);
         break;
     }
@@ -655,6 +659,7 @@ function openSuperpowersMenu(player) {
     .button("👀 Night Vision (15 Min)\n§7See clearly in dark caves and underwater", "textures/items/potion_bottle_nightVision")
     .button("🏃 Super Speed & Jump (5 Min)\n§7Run super fast and jump high", "textures/items/sugar")
     .button("🪽 Get Elytra & Flight Rockets\n§7Fly around the world with glider wings", "textures/items/elytra")
+    .button("⭐ Gain 30 XP Levels\n§7Levels to spend on enchanting", "textures/items/experience_bottle")
     .button("⬅️ Back to Main Menu\n§7Return to categories", "textures/ui/arrow_left");
 
   form.show(player).then((response) => {
@@ -678,6 +683,9 @@ function openSuperpowersMenu(player) {
         giveElytraKit(player);
         break;
       case 3:
+        giveExperienceLevels(player, 30);
+        break;
+      case 4:
         openMainMenu(player);
         break;
     }
@@ -3662,8 +3670,9 @@ function createFireworkLauncherPlan(player, count) {
  * channel; when a stalk reaches three blocks the observer fires the piston,
  * and the water carries the cane to a hopper and chest at the right-hand end.
  */
-function createSugarCaneFarmPlan(player, width) {
+function createSugarCaneFarmPlan(player, width, cropIndex = 0) {
   width = clampNumber(Math.round(width), 2, 8);
+  const crop = CANE_FARM_CROPS[cropIndex] || CANE_FARM_CROPS[0];
   const c = createOrientedBuildContext(player, width + 3, 5, -1);
   const q = [];
   const endX = width + 2;
@@ -3677,7 +3686,7 @@ function createSugarCaneFarmPlan(player, width) {
   q.push(setLocal(c, width + 2, 0, 1, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
   q.push(setLocal(c, 1, 1, 1, "minecraft:water"));
   q.push(fillLocal(c, 1, 1, 2, width, 1, 2, "minecraft:sand"));
-  q.push(fillLocal(c, 1, 2, 2, width, 2, 2, withBlockStates("minecraft:reeds", { age: 0 })));
+  q.push(fillLocal(c, 1, 2, 2, width, 2, 2, crop.block));
   q.push(fillLocal(c, 1, 1, 3, width, 2, 4, CONTRAPTION_BASE));
   q.push(fillLocal(c, 1, 3, 4, width, 3, 4, CONTRAPTION_BASE));
   for (let x = 1; x <= width; x++) {
@@ -3687,9 +3696,10 @@ function createSugarCaneFarmPlan(player, width) {
   }
   q.push(setLocal(c, 0, 1, 4, "minecraft:lantern"));
   q.push(setLocal(c, width + 1, 1, 4, "minecraft:lantern"));
-  const plan = makePlan(player, "Sugar Cane Farm", c, q, localBounds(c, 0, 0, 0, endX, 6, 4));
+  const plan = makePlan(player, `${crop.label} farm`, c, q, localBounds(c, 0, 0, 0, endX, 6, 4));
   plan.batchSize = CONTRAPTION_BATCH_SIZE;
   plan.width = width;
+  plan.crop = crop.label;
   return plan;
 }
 
@@ -3762,6 +3772,182 @@ function createRailwayPlan(player, length) {
   return plan;
 }
 
+/**
+ * Monster spawner XP farm. The spawner sits in a dark room; water streams
+ * flush the mobs into a trench and down a chute into a two-deep pit. The
+ * player stands outside and hits their legs through a one-block gap. The
+ * spawner is empty until it is tapped with the spawn egg this tool gives.
+ */
+function createSpawnerFarmPlan(player) {
+  const c = createOrientedBuildContext(player, 19, 13, -1);
+  const q = [];
+  const stone = "minecraft:stone_bricks";
+  q.push(fillLocal(c, 7, 1, 0, 11, 3, 1, "minecraft:air"));
+  q.push(fillLocal(c, 7, 0, 0, 11, 0, 1, CONTRAPTION_BASE));
+  pushLargeFill(q, c, 0, 0, 2, 18, 7, 12, stone);
+  q.push(fillLocal(c, 1, 4, 3, 17, 6, 11, "minecraft:air"));
+  q.push(fillLocal(c, 1, 3, 3, 17, 3, 3, "minecraft:air"));
+  q.push(fillLocal(c, 9, 1, 3, 9, 2, 3, "minecraft:air"));
+  q.push(setLocal(c, 9, 1, 2, "minecraft:air"));
+  q.push(fillLocal(c, 1, 4, 11, 17, 4, 11, "minecraft:water"));
+  q.push(setLocal(c, 1, 3, 3, "minecraft:water"));
+  q.push(setLocal(c, 17, 3, 3, "minecraft:water"));
+  q.push(setLocal(c, 9, 5, 7, "minecraft:mob_spawner"));
+  q.push(setLocal(c, 7, 1, 1, "minecraft:lantern"));
+  q.push(setLocal(c, 11, 1, 1, "minecraft:lantern"));
+  q.push(setLocal(c, 10, 1, 0, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, -1, 0) })));
+  const plan = makePlan(player, "Spawner XP Farm", c, q, localBounds(c, 0, 0, 0, 18, 7, 12));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  return plan;
+}
+
+/**
+ * Wheat farm harvested by flooding: a row of dispensers with water buckets
+ * washes the crops into hoppers and a chest when the button is pressed, and
+ * pressing it again takes the water back.
+ */
+function createFloodFarmPlan(player, width) {
+  width = clampNumber(Math.round(width), 3, 9);
+  const c = createOrientedBuildContext(player, width + 2, 11, -1);
+  const q = [];
+  const endX = width + 1;
+  q.push(fillLocal(c, 0, 1, 0, endX, 4, 10, "minecraft:air"));
+  q.push(fillLocal(c, 0, -1, 0, endX, 0, 10, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, 1, 0, width, 1, 0, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, 1, 1, 0, 1, 8, CONTRAPTION_BASE));
+  q.push(fillLocal(c, endX, 1, 1, endX, 1, 8, CONTRAPTION_BASE));
+  for (let x = 1; x <= width; x++) q.push(setLocal(c, x, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 1, 0), toggle_bit: false })));
+  q.push(setLocal(c, endX, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 0, -1), toggle_bit: false })));
+  q.push(setLocal(c, endX, 0, 0, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
+  const farmland = withBlockStates("minecraft:farmland", { moisturized_amount: 7 });
+  const wheat = withBlockStates("minecraft:wheat", { growth: 7 });
+  q.push(fillLocal(c, 1, 0, 2, width, 0, 4, farmland));
+  q.push(fillLocal(c, 1, 1, 2, width, 1, 4, wheat));
+  q.push(fillLocal(c, 1, 0, 5, width, 0, 5, "minecraft:water"));
+  q.push(fillLocal(c, 1, 0, 6, width, 0, 7, farmland));
+  q.push(fillLocal(c, 1, 1, 6, width, 1, 7, wheat));
+  q.push(fillLocal(c, 1, 0, 8, width, 0, 8, "minecraft:water"));
+  for (let x = 1; x <= width; x++) {
+    q.push(setLocal(c, x, 1, 9, withBlockStates("minecraft:dispenser", { facing_direction: facingCode(c, 0, -1), triggered_bit: false })));
+    q.push(setLocal(c, x, 2, 10, "minecraft:redstone_wire"));
+  }
+  q.push(fillLocal(c, 1, 1, 10, endX, 1, 10, CONTRAPTION_BASE));
+  q.push(setLocal(c, endX, 2, 10, withBlockStates("minecraft:stone_button", { facing_direction: FACING_UP, button_pressed_bit: false })));
+  q.push(setLocal(c, 0, 2, 4, "minecraft:lantern"));
+  q.push(setLocal(c, endX, 2, 4, "minecraft:lantern"));
+  for (let x = 1; x <= width; x++) {
+    const point = localPoint(c, x, 1, 9);
+    q.push(`replaceitem block ${point.x} ${point.y} ${point.z} slot.container 0 minecraft:water_bucket 1`);
+  }
+  const plan = makePlan(player, "Flood Wheat Farm", c, q, localBounds(c, 0, -1, 0, endX, 4, 10));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  plan.width = width;
+  return plan;
+}
+
+/**
+ * Wool farm: a sheep on a grass block, an observer watching the grass, a
+ * dispenser with shears, and a hopper minecart under the grass feeding a
+ * chest in a small pit behind the pen.
+ */
+function createWoolFarmPlan(player) {
+  const c = createOrientedBuildContext(player, 5, 7, -1);
+  const q = [];
+  q.push(fillLocal(c, 0, 1, 0, 4, 3, 6, "minecraft:air"));
+  q.push(fillLocal(c, 0, -2, 0, 4, 0, 6, CONTRAPTION_BASE));
+  q.push(setLocal(c, 2, 0, 2, "minecraft:grass_block"));
+  q.push(setLocal(c, 2, 0, 1, withBlockStates("minecraft:observer", { "minecraft:facing_direction": facingName(c, 0, 1), powered_bit: false })));
+  q.push(setLocal(c, 2, 1, 0, "minecraft:redstone_wire"));
+  q.push(setLocal(c, 2, 1, 1, withBlockStates("minecraft:dispenser", { facing_direction: facingCode(c, 0, 1), triggered_bit: false })));
+  q.push(setLocal(c, 2, 2, 1, "minecraft:glass"));
+  for (const [x, z1, z2] of [[1, 1, 3], [3, 1, 3]]) q.push(fillLocal(c, x, 1, z1, x, 2, z2, "minecraft:oak_fence"));
+  q.push(fillLocal(c, 2, 1, 3, 2, 2, 3, "minecraft:oak_fence"));
+  q.push(setLocal(c, 2, -2, 2, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 0, 1), toggle_bit: false })));
+  q.push(setLocal(c, 2, -2, 3, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 0, 1), toggle_bit: false })));
+  q.push(setLocal(c, 2, -2, 4, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, 1) })));
+  q.push(setLocal(c, 2, -1, 2, withBlockStates("minecraft:rail", { rail_direction: c.forwardX !== 0 ? 1 : 0 })));
+  q.push(fillLocal(c, 2, -1, 4, 2, 0, 4, "minecraft:air"));
+  q.push(setLocal(c, 2, 0, 5, "minecraft:air"));
+  q.push(setLocal(c, 0, 1, 0, "minecraft:lantern"));
+  q.push(setLocal(c, 4, 1, 0, "minecraft:lantern"));
+  const cart = localPoint(c, 2, -1, 2);
+  q.push(`summon minecraft:hopper_minecart ${cart.x + 0.5} ${cart.y} ${cart.z + 0.5}`);
+  const sheep = localPoint(c, 2, 1, 2);
+  q.push(`summon minecraft:sheep ${sheep.x + 0.5} ${sheep.y} ${sheep.z + 0.5}`);
+  const dispenser = localPoint(c, 2, 1, 1);
+  q.push(`replaceitem block ${dispenser.x} ${dispenser.y} ${dispenser.z} slot.container 0 minecraft:shears 1`);
+  const plan = makePlan(player, "Wool Farm", c, q, localBounds(c, 0, -2, 0, 4, 3, 6));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  return plan;
+}
+
+/** Water meets lava in a stone trench; cobblestone forms next to the lava and regrows when mined. */
+function createCobbleGeneratorPlan(player) {
+  const c = createOrientedBuildContext(player, 6, 3, -1);
+  const q = [];
+  q.push(fillLocal(c, 0, 1, 0, 5, 2, 2, "minecraft:air"));
+  q.push(fillLocal(c, 0, -1, 0, 5, 0, 2, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 1, 0, 1, 4, 0, 1, "minecraft:air"));
+  q.push(setLocal(c, 1, 0, 1, "minecraft:water"));
+  q.push(setLocal(c, 4, 0, 1, "minecraft:lava"));
+  q.push(setLocal(c, 4, 1, 1, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 5, 1, 0, 5, 1, 2, CONTRAPTION_BASE));
+  q.push(setLocal(c, 0, 1, 1, "minecraft:lantern"));
+  const plan = makePlan(player, "Cobblestone Generator", c, q, localBounds(c, 0, -1, 0, 5, 2, 2));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  return plan;
+}
+
+/**
+ * Three furnaces fed by hoppers: input chests on top, fuel chests behind,
+ * and the smelted items drop into chests sunk into the ground in front.
+ */
+function createSmelterPlan(player) {
+  const c = createOrientedBuildContext(player, 5, 4, -1);
+  const q = [];
+  q.push(fillLocal(c, 0, 1, 0, 4, 4, 3, "minecraft:air"));
+  q.push(fillLocal(c, 0, -1, 0, 4, 0, 3, CONTRAPTION_BASE));
+  for (let x = 1; x <= 3; x++) {
+    q.push(setLocal(c, x, 0, 0, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
+    q.push(setLocal(c, x, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 0, -1), toggle_bit: false })));
+    q.push(setLocal(c, x, 1, 1, withBlockStates("minecraft:furnace", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
+    q.push(setLocal(c, x, 2, 1, withBlockStates("minecraft:hopper", { facing_direction: FACING_DOWN, toggle_bit: false })));
+    q.push(setLocal(c, x, 3, 1, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
+    q.push(setLocal(c, x, 1, 2, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 0, -1), toggle_bit: false })));
+    q.push(setLocal(c, x, 2, 2, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, 1) })));
+  }
+  for (const x of [0, 4]) {
+    q.push(fillLocal(c, x, 1, 1, x, 3, 2, "minecraft:stone_bricks"));
+    q.push(setLocal(c, x, 4, 1, "minecraft:lantern"));
+  }
+  const plan = makePlan(player, "Auto Smelter", c, q, localBounds(c, 0, -1, 0, 4, 4, 3));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  return plan;
+}
+
+/** Two-by-two pool of water sources in a stone surround: take as many buckets as you like. */
+function createWaterSourcePlan(player) {
+  const c = createOrientedBuildContext(player, 4, 4, -1);
+  const q = [];
+  q.push(fillLocal(c, 0, 1, 0, 3, 2, 3, "minecraft:air"));
+  q.push(fillLocal(c, 0, -1, 0, 3, 0, 3, "minecraft:stone_bricks"));
+  q.push(fillLocal(c, 1, 0, 1, 2, 0, 2, "minecraft:water"));
+  q.push(setLocal(c, 0, 1, 0, "minecraft:lantern"));
+  const plan = makePlan(player, "Infinite Water Source", c, q, localBounds(c, 0, -1, 0, 3, 2, 3));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  return plan;
+}
+
+const SPAWNER_FARM_MOBS = [
+  { name: "Zombies 🧟 (safest, drop rotten flesh and iron)", egg: "minecraft:zombie_spawn_egg", label: "zombie" },
+  { name: "Skeletons 💀 (bones and arrows; they shoot back)", egg: "minecraft:skeleton_spawn_egg", label: "skeleton" }
+];
+
+const CANE_FARM_CROPS = [
+  { name: "Sugar cane 🎋", block: withBlockStates("minecraft:reeds", { age: 0 }), label: "sugar cane" },
+  { name: "Bamboo 🎍", block: "minecraft:bamboo", label: "bamboo" }
+];
+
 const CONTRAPTIONS = [
   {
     key: "auto_door", name: "🚪 Automatic Door", description: "Iron door that opens from plates or buttons",
@@ -3791,11 +3977,60 @@ const CONTRAPTIONS = [
     success: (plan) => `🎆 ${plan.count} firework launchers loaded with 192 rockets each! Press the button to start the show.`
   },
   {
-    key: "sugar_cane_farm", name: "🌾 Auto Sugar Cane Farm", description: "Observers and pistons harvest into a chest",
-    fields: [{ type: "slider", key: "width", label: "Farm width (rows of cane):", min: 2, max: 8, step: 1, defaultValue: 6 }],
-    create: (player, v) => createSugarCaneFarmPlan(player, v.width),
-    prompt: (plan) => `Build an automatic sugar cane farm ${plan.width} rows wide here?\n\nThe chest is at the right-hand end of the water channel.`,
-    success: (plan) => `🌾 Automatic sugar cane farm built (${plan.width} rows)! Cane is harvested as it grows and floats to the chest.`
+    key: "sugar_cane_farm", name: "🌾 Auto Sugar Cane / Bamboo Farm", description: "Observers and pistons harvest into a chest",
+    fields: [
+      { type: "dropdown", key: "crop", label: "Crop:", options: CANE_FARM_CROPS.map((crop) => crop.name) },
+      { type: "slider", key: "width", label: "Farm width (rows):", min: 2, max: 8, step: 1, defaultValue: 6 }
+    ],
+    create: (player, v) => createSugarCaneFarmPlan(player, v.width, v.crop),
+    prompt: (plan) => `Build an automatic ${plan.crop} farm ${plan.width} rows wide here?\n\nThe chest is at the right-hand end of the water channel.`,
+    success: (plan) => `🌾 Automatic ${plan.crop} farm built (${plan.width} rows)! It is harvested as it grows and floats to the chest.`
+  },
+  {
+    key: "spawner_farm", name: "🧟 Spawner XP Farm", description: "Dark spawner room, water flush and a kill slot",
+    fields: [{ type: "dropdown", key: "mob", label: "Mob to farm:", options: SPAWNER_FARM_MOBS.map((m) => m.name) }],
+    create: (player) => createSpawnerFarmPlan(player),
+    prompt: () => "Build a monster spawner XP farm here?\n\nYou will get a spawn egg: tap the spawner inside with it to choose the mob. Stand at the front and hit the mobs' legs through the gap.",
+    success: () => "🧟 Spawner XP farm built! Walk in, tap the spawner with the spawn egg, then come back out and wait at the gap.",
+    after: (player, v) => {
+      const mob = SPAWNER_FARM_MOBS[v.mob] || SPAWNER_FARM_MOBS[0];
+      if (giveItemToPlayer(player, mob.egg, 1)) player.sendMessage(`§a🥚 A ${mob.label} spawn egg was added to your inventory. Tap the spawner with it.§r`);
+    }
+  },
+  {
+    key: "flood_farm", name: "🌾 Flood Wheat Farm", description: "Press the button to wash the harvest into a chest",
+    fields: [{ type: "slider", key: "width", label: "Farm width (rows):", min: 3, max: 9, step: 1, defaultValue: 6 }],
+    create: (player, v) => createFloodFarmPlan(player, v.width),
+    prompt: (plan) => `Build a ${plan.width}-row wheat farm with flood harvesting here?\n\nPress the button at the back to flood it, and again to take the water back. Replant after each harvest.`,
+    success: (plan) => `🌾 Flood wheat farm built (${plan.width} rows)! When the wheat is golden, press the button, then press it again and replant.`
+  },
+  {
+    key: "wool_farm", name: "🐑 Auto Wool Farm", description: "A sheep shorn by a dispenser whenever it eats",
+    fields: [],
+    create: (player) => createWoolFarmPlan(player),
+    prompt: () => "Build an automatic wool farm here?\n\nA sheep is penned on grass; every time it eats, the dispenser shears it and the wool goes to the chest in the pit behind.",
+    success: () => "🐑 Wool farm built! Wool collects in the chest in the little pit behind the pen."
+  },
+  {
+    key: "cobble_generator", name: "🪨 Cobblestone Generator", description: "Endless cobblestone from water and lava",
+    fields: [],
+    create: (player) => createCobbleGeneratorPlan(player),
+    prompt: () => "Build a cobblestone generator here?\n\nMine the cobblestone next to the covered lava and it forms again.",
+    success: () => "🪨 Cobblestone generator built! Mine the block between the water and the covered lava; it keeps coming back."
+  },
+  {
+    key: "smelter", name: "🔥 Auto Smelter", description: "Three furnaces fed by hoppers and chests",
+    fields: [],
+    create: (player) => createSmelterPlan(player),
+    prompt: () => "Build an automatic smelter here?\n\nOres go in the top chests, fuel in the back chests, and the results drop into the chests in front.",
+    success: () => "🔥 Auto smelter built! Top chests take ores, back chests take fuel, front chests collect the results."
+  },
+  {
+    key: "water_source", name: "💧 Infinite Water Source", description: "Two-by-two pool that never runs dry",
+    fields: [],
+    create: (player) => createWaterSourcePlan(player),
+    prompt: () => "Build an infinite water source here?",
+    success: () => "💧 Infinite water source built! Take as many buckets as you like."
   },
   {
     key: "street_lamps", name: "🌃 Night Lamps", description: "Lamp posts that switch on at night",
@@ -4653,6 +4888,342 @@ function findStandableColumn(dimension, x, z, requestedY) {
 // ==========================================
 // 6. 🐾 PETS & COMPANIONS MENU (WITH ICONS)
 // ==========================================
+
+// ==========================================
+// ✨ ENCHANT & ARMOUR
+// ==========================================
+
+// Enchantments the device can apply, with their normal top level.
+const ENCHANTMENT_OPTIONS = [
+  { id: "protection", name: "Protection 🛡️", max: 4 },
+  { id: "fire_protection", name: "Fire Protection 🔥", max: 4 },
+  { id: "blast_protection", name: "Blast Protection 💥", max: 4 },
+  { id: "projectile_protection", name: "Projectile Protection 🏹", max: 4 },
+  { id: "thorns", name: "Thorns 🌵", max: 3 },
+  { id: "respiration", name: "Respiration 🫧", max: 3 },
+  { id: "aqua_affinity", name: "Aqua Affinity 🌊", max: 1 },
+  { id: "feather_falling", name: "Feather Falling 🪶", max: 4 },
+  { id: "depth_strider", name: "Depth Strider 🏊", max: 3 },
+  { id: "frost_walker", name: "Frost Walker ❄️", max: 2 },
+  { id: "soul_speed", name: "Soul Speed 👻", max: 3 },
+  { id: "swift_sneak", name: "Swift Sneak 🤫", max: 3 },
+  { id: "unbreaking", name: "Unbreaking 💪", max: 3 },
+  { id: "mending", name: "Mending ✨", max: 1 },
+  { id: "sharpness", name: "Sharpness ⚔️", max: 5 },
+  { id: "smite", name: "Smite 🧟", max: 5 },
+  { id: "bane_of_arthropods", name: "Bane of Arthropods 🕷️", max: 5 },
+  { id: "knockback", name: "Knockback 👊", max: 2 },
+  { id: "fire_aspect", name: "Fire Aspect 🔥", max: 2 },
+  { id: "looting", name: "Looting 💰", max: 3 },
+  { id: "efficiency", name: "Efficiency ⛏️", max: 5 },
+  { id: "silk_touch", name: "Silk Touch 🪶", max: 1 },
+  { id: "fortune", name: "Fortune 💎", max: 3 },
+  { id: "power", name: "Power 🏹", max: 5 },
+  { id: "punch", name: "Punch 👊", max: 2 },
+  { id: "flame", name: "Flame 🔥", max: 1 },
+  { id: "infinity", name: "Infinity ♾️", max: 1 },
+  { id: "multishot", name: "Multishot 🎯", max: 1 },
+  { id: "piercing", name: "Piercing 🎯", max: 4 },
+  { id: "quick_charge", name: "Quick Charge ⚡", max: 3 },
+  { id: "loyalty", name: "Loyalty 🔱", max: 3 },
+  { id: "impaling", name: "Impaling 🔱", max: 5 },
+  { id: "riptide", name: "Riptide 🌊", max: 3 },
+  { id: "channeling", name: "Channeling ⚡", max: 1 },
+  { id: "luck_of_the_sea", name: "Luck of the Sea 🎣", max: 3 },
+  { id: "lure", name: "Lure 🎣", max: 3 },
+  { id: "density", name: "Density 🔨", max: 5 },
+  { id: "breach", name: "Breach 🔨", max: 4 },
+  { id: "wind_burst", name: "Wind Burst 💨", max: 3 }
+];
+
+const ARMOUR_MATERIALS = [
+  { name: "Leather 🟫", prefix: "leather" },
+  { name: "Chainmail ⛓️", prefix: "chainmail" },
+  { name: "Iron ⚔️", prefix: "iron" },
+  { name: "Gold 🪙", prefix: "golden" },
+  { name: "Diamond 💎", prefix: "diamond" },
+  { name: "Netherite 👑", prefix: "netherite" }
+];
+
+const ARMOUR_PIECES = [
+  { slot: "Head", suffix: "helmet", enchantments: [["protection", 4], ["unbreaking", 3], ["mending", 1], ["respiration", 3], ["aqua_affinity", 1]] },
+  { slot: "Chest", suffix: "chestplate", enchantments: [["protection", 4], ["unbreaking", 3], ["mending", 1], ["thorns", 3]] },
+  { slot: "Legs", suffix: "leggings", enchantments: [["protection", 4], ["unbreaking", 3], ["mending", 1], ["swift_sneak", 3]] },
+  { slot: "Feet", suffix: "boots", enchantments: [["protection", 4], ["unbreaking", 3], ["mending", 1], ["feather_falling", 4], ["depth_strider", 3]] }
+];
+
+const TOOL_MATERIALS = [
+  { name: "Wooden 🪵", prefix: "wooden" },
+  { name: "Stone 🪨", prefix: "stone" },
+  { name: "Iron ⚔️", prefix: "iron" },
+  { name: "Gold 🪙", prefix: "golden" },
+  { name: "Diamond 💎", prefix: "diamond" },
+  { name: "Netherite 👑", prefix: "netherite" }
+];
+
+const TOOL_KIT = [
+  { name: "sword", id: (m) => `minecraft:${m}_sword`, enchantments: [["sharpness", 5], ["looting", 3], ["unbreaking", 3], ["mending", 1]] },
+  { name: "pickaxe", id: (m) => `minecraft:${m}_pickaxe`, enchantments: [["efficiency", 5], ["fortune", 3], ["unbreaking", 3], ["mending", 1]] },
+  { name: "axe", id: (m) => `minecraft:${m}_axe`, enchantments: [["efficiency", 5], ["sharpness", 5], ["unbreaking", 3], ["mending", 1]] },
+  { name: "shovel", id: (m) => `minecraft:${m}_shovel`, enchantments: [["efficiency", 5], ["silk_touch", 1], ["unbreaking", 3], ["mending", 1]] },
+  { name: "bow", id: () => "minecraft:bow", enchantments: [["power", 5], ["unbreaking", 3], ["infinity", 1]] }
+];
+
+const TRIM_PATTERNS = ["Sentry", "Vex", "Wild", "Coast", "Dune", "Wayfinder", "Raiser", "Shaper", "Host", "Ward", "Silence", "Tide", "Snout", "Rib", "Eye", "Spire", "Flow", "Bolt"]
+  .map((name) => ({ name, id: `minecraft:${name.toLowerCase()}_armor_trim_smithing_template` }));
+
+const TRIM_MATERIALS = [
+  { name: "Iron ⚪", id: "minecraft:iron_ingot" },
+  { name: "Copper 🟠", id: "minecraft:copper_ingot" },
+  { name: "Gold 🟡", id: "minecraft:gold_ingot" },
+  { name: "Lapis 🔵", id: "minecraft:lapis_lazuli" },
+  { name: "Emerald 🟢", id: "minecraft:emerald" },
+  { name: "Diamond 💠", id: "minecraft:diamond" },
+  { name: "Netherite ⚫", id: "minecraft:netherite_ingot" },
+  { name: "Redstone 🔴", id: "minecraft:redstone" },
+  { name: "Amethyst 🟣", id: "minecraft:amethyst_shard" },
+  { name: "Quartz ⬜", id: "minecraft:quartz" },
+  { name: "Resin 🟧", id: "minecraft:resin_brick" }
+];
+
+const LEVEL_NUMERALS = ["I", "II", "III", "IV", "V"];
+
+function enchantmentTopLevel(id) {
+  try {
+    if (typeof EnchantmentTypes !== "undefined") {
+      const type = EnchantmentTypes.get(id);
+      if (type && type.maxLevel) return type.maxLevel;
+    }
+  } catch (e) {}
+  const option = ENCHANTMENT_OPTIONS.find((o) => o.id === id);
+  return option ? option.max : 1;
+}
+
+/** Adds one enchantment to an item; returns true when it was added. */
+function applyEnchantment(item, id, level) {
+  try {
+    const enchantable = item.getComponent("enchantable");
+    if (!enchantable) return false;
+    const enchantment = { type: id, level: clampNumber(Math.round(level), 1, enchantmentTopLevel(id)) };
+    if (!enchantable.canAddEnchantment(enchantment)) return false;
+    enchantable.addEnchantment(enchantment);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function canEnchant(item, id) {
+  try {
+    const enchantable = item.getComponent("enchantable");
+    return Boolean(enchantable && enchantable.canAddEnchantment({ type: id, level: 1 }));
+  } catch (e) {
+    return false;
+  }
+}
+
+function applyEnchantments(item, pairs) {
+  let count = 0;
+  for (const [id, level] of pairs) if (applyEnchantment(item, id, level)) count++;
+  return count;
+}
+
+/** The item in the player's main hand and a function that writes it back. */
+function getHeldItem(player) {
+  try {
+    const equippable = player.getComponent("equippable");
+    if (equippable && typeof equippable.getEquipment === "function") {
+      return { item: equippable.getEquipment("Mainhand"), save: (item) => equippable.setEquipment("Mainhand", item) };
+    }
+  } catch (e) {}
+  const inventory = player.getComponent("inventory");
+  const container = inventory && inventory.container;
+  const slot = player.selectedSlotIndex !== undefined ? player.selectedSlotIndex : player.selectedSlot;
+  if (!container || slot === undefined) return { item: undefined, save: () => {} };
+  return { item: container.getItem(slot), save: (item) => container.setItem(slot, item) };
+}
+
+/** Equips an item in an armour slot, or puts it in the inventory. Returns "equipped", "given" or "dropped". */
+function equipOrGive(player, item, slot) {
+  if (slot) {
+    try {
+      const equippable = player.getComponent("equippable");
+      if (equippable && typeof equippable.setEquipment === "function" && equippable.setEquipment(slot, item) !== false) return "equipped";
+    } catch (e) {}
+  }
+  try {
+    const inventory = player.getComponent("inventory");
+    const container = inventory && inventory.container;
+    const leftover = container ? container.addItem(item) : item;
+    if (!leftover) return "given";
+    player.dimension.spawnItem(leftover, { x: player.location.x, y: player.location.y + 0.5, z: player.location.z });
+    return "dropped";
+  } catch (e) {
+    return "dropped";
+  }
+}
+
+function itemDisplayName(item) {
+  return (item.nameTag || item.typeId).replace(/^minecraft:/, "").replace(/_/g, " ");
+}
+
+function openEnchantMenu(player) {
+  const form = new ActionFormData()
+    .title("✨ Enchant & Armour")
+    .body("Enchant what you are holding, or get a whole kit:")
+    .button("✨ Enchant Item in Hand\n§7Pick an enchantment and level for the held item", "textures/items/book_enchanted")
+    .button("🛡️ Full Armour Set\n§7Helmet to boots, optionally enchanted and equipped", "textures/items/diamond_chestplate")
+    .button("⚒️ Enchanted Tool Kit\n§7Sword, pickaxe, axe, shovel and bow", "textures/items/diamond_pickaxe")
+    .button("🎨 Armour Trim Kit\n§7Templates, material and a smithing table", "textures/items/netherite_upgrade_smithing_template")
+    .button("⬅️ Back to Main Menu\n§7Return to categories", "textures/ui/arrow_left");
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    switch (response.selection) {
+      case 0: openEnchantHeldItemMenu(player); break;
+      case 1: openArmourSetMenu(player); break;
+      case 2: openToolKitMenu(player); break;
+      case 3: openTrimKitMenu(player); break;
+      case 4: openMainMenu(player); break;
+    }
+  }).catch((e) => console.error("Enchant menu error: " + e));
+}
+
+function openEnchantHeldItemMenu(player) {
+  const held = getHeldItem(player);
+  if (!held.item) {
+    player.sendMessage("§eHold the item you want to enchant in your main hand, then open this tool again.§r");
+    return;
+  }
+  const options = ENCHANTMENT_OPTIONS.filter((option) => canEnchant(held.item, option.id));
+  if (!options.length) {
+    player.sendMessage(`§eYour ${itemDisplayName(held.item)} cannot take any more enchantments.§r`);
+    return;
+  }
+  const form = new ModalFormData()
+    .title("✨ Enchant Item in Hand")
+    .dropdown(`Enchantment for your ${itemDisplayName(held.item)}:`, options.map((o) => `${o.name} (up to ${LEVEL_NUMERALS[enchantmentTopLevel(o.id) - 1] || enchantmentTopLevel(o.id)})`), { defaultValueIndex: 0 })
+    .dropdown("Level:", LEVEL_NUMERALS, { defaultValueIndex: 4 })
+    .toggle("🌟 Instead, add every enchantment it can take at the top level", { defaultValue: false });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const [optionIndex, levelIndex, everything] = response.formValues;
+    const current = getHeldItem(player);
+    if (!current.item || current.item.typeId !== held.item.typeId) {
+      player.sendMessage("§eYou changed what you are holding. Hold the item and try again.§r");
+      return;
+    }
+    let added = 0;
+    const names = [];
+    if (everything) {
+      for (const option of options) {
+        if (applyEnchantment(current.item, option.id, enchantmentTopLevel(option.id))) { added++; names.push(option.name); }
+      }
+    } else {
+      const option = options[optionIndex] || options[0];
+      const level = Math.min(Number(levelIndex) + 1, enchantmentTopLevel(option.id));
+      if (applyEnchantment(current.item, option.id, level)) { added++; names.push(`${option.name} ${LEVEL_NUMERALS[level - 1]}`); }
+    }
+    if (!added) {
+      player.sendMessage("§eThat enchantment could not be added (it may clash with one already on the item).§r");
+      return;
+    }
+    current.save(current.item);
+    player.sendMessage(`§a✨ Added ${names.join(", ")} to your ${itemDisplayName(current.item)}!§r`);
+    player.playSound("random.anvil_use", { volume: 0.8, pitch: 1.4 });
+  }).catch((e) => console.error("Enchant held item error: " + e));
+}
+
+function giveArmourSet(player, materialIndex, enchant, equip) {
+  const material = ARMOUR_MATERIALS[materialIndex] || ARMOUR_MATERIALS[0];
+  let enchantments = 0;
+  const outcomes = { equipped: 0, given: 0, dropped: 0 };
+  for (const piece of ARMOUR_PIECES) {
+    const item = new ItemStack(`minecraft:${material.prefix}_${piece.suffix}`, 1);
+    if (enchant) enchantments += applyEnchantments(item, piece.enchantments);
+    outcomes[equipOrGive(player, item, equip ? piece.slot : null)]++;
+  }
+  const where = outcomes.equipped === ARMOUR_PIECES.length ? "You are wearing it now."
+    : outcomes.dropped ? "Your inventory was full, so some pieces were dropped at your feet." : "It is in your inventory.";
+  player.sendMessage(`§a🛡️ ${material.name.replace(/ \S+$/, "")} armour set ready${enchant ? ` with ${enchantments} enchantments` : ""}! ${where}§r`);
+  player.playSound("random.levelup", { volume: 0.9, pitch: 1.3 });
+  return { enchantments, outcomes };
+}
+
+function openArmourSetMenu(player) {
+  const form = new ModalFormData()
+    .title("🛡️ Full Armour Set")
+    .dropdown("Armour material:", ARMOUR_MATERIALS.map((m) => m.name), { defaultValueIndex: 4 })
+    .toggle("✨ Enchant it (Protection IV, Unbreaking III, Mending and more)", { defaultValue: true })
+    .toggle("👕 Put it on straight away", { defaultValue: true });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const [materialIndex, enchant, equip] = response.formValues;
+    giveArmourSet(player, Number(materialIndex), Boolean(enchant), Boolean(equip));
+  }).catch((e) => console.error("Armour set menu error: " + e));
+}
+
+function giveToolKit(player, materialIndex, enchant) {
+  const material = TOOL_MATERIALS[materialIndex] || TOOL_MATERIALS[0];
+  let enchantments = 0, dropped = 0;
+  for (const tool of TOOL_KIT) {
+    const item = new ItemStack(tool.id(material.prefix), 1);
+    if (enchant) enchantments += applyEnchantments(item, tool.enchantments);
+    if (equipOrGive(player, item, null) === "dropped") dropped++;
+  }
+  player.sendMessage(`§a⚒️ ${material.name.replace(/ \S+$/, "")} tool kit ready${enchant ? ` with ${enchantments} enchantments` : ""}!${dropped ? " Your inventory was full, so some tools were dropped at your feet." : ""}§r`);
+  player.playSound("random.levelup", { volume: 0.9, pitch: 1.3 });
+  return enchantments;
+}
+
+function openToolKitMenu(player) {
+  const form = new ModalFormData()
+    .title("⚒️ Enchanted Tool Kit")
+    .dropdown("Tool material:", TOOL_MATERIALS.map((m) => m.name), { defaultValueIndex: 4 })
+    .toggle("✨ Enchant them (Efficiency V, Sharpness V, Fortune III, Power V, Unbreaking, Mending)", { defaultValue: true });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const [materialIndex, enchant] = response.formValues;
+    giveToolKit(player, Number(materialIndex), Boolean(enchant));
+  }).catch((e) => console.error("Tool kit menu error: " + e));
+}
+
+/**
+ * Armour trims cannot be applied by the Script API or commands on Bedrock,
+ * so this hands over everything needed to do it at a smithing table.
+ */
+function giveTrimKit(player, patternIndex, materialIndex, pieces) {
+  const pattern = TRIM_PATTERNS[patternIndex] || TRIM_PATTERNS[0];
+  const material = TRIM_MATERIALS[materialIndex] || TRIM_MATERIALS[0];
+  pieces = clampNumber(Math.round(pieces), 1, 8);
+  let dropped = 0;
+  for (const [id, amount] of [[pattern.id, pieces], [material.id, pieces], ["minecraft:smithing_table", 1]]) {
+    if (equipOrGive(player, new ItemStack(id, amount), null) === "dropped") dropped++;
+  }
+  player.sendMessage(`§a🎨 ${pattern.name} trim kit ready: ${pieces} templates, ${pieces} ${material.name.replace(/ \S+$/, "").toLowerCase()} and a smithing table.${dropped ? " Some of it was dropped at your feet." : ""}§r`);
+  player.sendMessage("§ePlace the smithing table, then put a template, an armour piece and one trim material in its three slots to apply the trim.§r");
+  player.playSound("random.anvil_use", { volume: 0.8, pitch: 1.2 });
+  return { pattern, material, pieces };
+}
+
+function openTrimKitMenu(player) {
+  const form = new ModalFormData()
+    .title("🎨 Armour Trim Kit")
+    .dropdown("Trim pattern:", TRIM_PATTERNS.map((p) => p.name), { defaultValueIndex: 0 })
+    .dropdown("Trim colour (material):", TRIM_MATERIALS.map((m) => m.name), { defaultValueIndex: 5 })
+    .slider("Armour pieces to trim:", 1, 8, { valueStep: 1, defaultValue: 4 });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const [patternIndex, materialIndex, pieces] = response.formValues;
+    giveTrimKit(player, Number(patternIndex), Number(materialIndex), Number(pieces));
+  }).catch((e) => console.error("Trim kit menu error: " + e));
+}
+
+function giveExperienceLevels(player, levels = 30) {
+  runCommand(player, `xp ${levels}L @s`).then(() => {
+    player.sendMessage(`§a⭐ You gained ${levels} experience levels! Spend them at an enchanting table or anvil.§r`);
+    player.playSound("random.levelup", { volume: 0.9, pitch: 1.6 });
+  }).catch((err) => player.sendMessage(`§cCould not give experience: ${err}§r`));
+}
 
 function openPetsMenu(player) {
   const form = new ActionFormData()

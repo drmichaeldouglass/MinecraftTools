@@ -863,7 +863,7 @@ test('redstone contraptions build in every facing with working parts and undo', 
   const base = harness();
   const keys = base.evaluate('CONTRAPTIONS.map(c => c.key)');
   const limit = base.evaluate('FILL_COMMAND_LIMIT');
-  assert.equal(keys.join(' '), 'auto_door bubble_elevator firework_launcher sugar_cane_farm street_lamps railway');
+  assert.equal(keys.join(' '), 'auto_door bubble_elevator firework_launcher sugar_cane_farm spawner_farm flood_farm wool_farm cobble_generator smelter water_source street_lamps railway');
   for (let f = 0; f < FACINGS.length; f++) {
     const { ctx, player, dimension, tick } = harness();
     player.getViewDirection = () => FACINGS[f];
@@ -873,12 +873,18 @@ test('redstone contraptions build in every facing with working parts and undo', 
       auto_door: ctx.createAutoDoorPlan(player, 'minecraft:stone_bricks', f % 2 ? 'buttons' : 'plates'),
       bubble_elevator: ctx.createBubbleElevatorPlan(player, 10, f % 2 === 0),
       firework_launcher: ctx.createFireworkLauncherPlan(player, 4),
-      sugar_cane_farm: ctx.createSugarCaneFarmPlan(player, 6),
+      sugar_cane_farm: ctx.createSugarCaneFarmPlan(player, 6, f % 2),
+      spawner_farm: ctx.createSpawnerFarmPlan(player),
+      flood_farm: ctx.createFloodFarmPlan(player, 5),
+      wool_farm: ctx.createWoolFarmPlan(player),
+      cobble_generator: ctx.createCobbleGeneratorPlan(player),
+      smelter: ctx.createSmelterPlan(player),
+      water_source: ctx.createWaterSourcePlan(player),
       street_lamps: ctx.createStreetLampPlan(player, 12),
       railway: ctx.createRailwayPlan(player, 10)
     };
     for (const [key, plan] of Object.entries(plans)) {
-      const blockCommands = plan.commands.filter(c => !c.startsWith('replaceitem'));
+      const blockCommands = plan.commands.filter(c => !c.startsWith('replaceitem') && !c.startsWith('summon'));
       assertCommandsInside(ctx, { ...plan, commands: blockCommands }, limit);
       player.messages.length = 0;
       await settle(ctx.executeBuildPlan(player, plan, `contraption_${key}`, `${key} done`), tick);
@@ -903,7 +909,8 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.ok(loads.every(c => /^replaceitem block -?\d+ -?\d+ -?\d+ slot\.container [012] minecraft:firework_rocket 64$/.test(c)));
         assert.ok(plan.commands.indexOf(loads[0]) > plan.commands.findIndex(c => c.includes('minecraft:dispenser')), 'dispensers exist before loading');
       } else if (key === 'sugar_cane_farm') {
-        assert.equal(countBlocks(placed, v => v === 'minecraft:reeds'), 6);
+        assert.equal(countBlocks(placed, v => v === (f % 2 ? 'minecraft:bamboo' : 'minecraft:reeds')), 6);
+        assert.equal(plan.crop, f % 2 ? 'bamboo' : 'sugar cane');
         assert.equal(countBlocks(placed, v => v === 'minecraft:piston'), 6);
         assert.equal(countBlocks(placed, v => v === 'minecraft:observer'), 6);
         assert.equal(countBlocks(placed, v => v === 'minecraft:sand'), 6);
@@ -915,6 +922,45 @@ test('redstone contraptions build in every facing with working parts and undo', 
         const towardsPlayer = { '1,0': [4, 'west'], '-1,0': [5, 'east'], '0,1': [2, 'north'], '0,-1': [3, 'south'] }[`${FACINGS[f].x},${FACINGS[f].z}`];
         assert.ok(piston.includes(`"facing_direction"=${towardsPlayer[0]}`), piston);
         assert.ok(observer.includes(`"minecraft:facing_direction"="${towardsPlayer[1]}"`), observer);
+      } else if (key === 'spawner_farm') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:mob_spawner'), 1);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 19);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
+        const gap = ctx.localPoint(plan.context, 9, 1, 2), pit = ctx.localPoint(plan.context, 9, 1, 3), floor = ctx.localPoint(plan.context, 9, 0, 3);
+        assert.equal(dimension.getBlock(gap).typeId, 'minecraft:air');
+        assert.equal(dimension.getBlock(pit).typeId, 'minecraft:air');
+        assert.equal(dimension.getBlock(floor).typeId, 'minecraft:stone_bricks');
+        const stream = ctx.localPoint(plan.context, 9, 4, 11), edge = ctx.localPoint(plan.context, 9, 3, 4);
+        assert.equal(dimension.getBlock(stream).typeId, 'minecraft:water');
+        assert.equal(dimension.getBlock(edge).typeId, 'minecraft:stone_bricks', 'room floor under the stream');
+      } else if (key === 'flood_farm') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:dispenser'), 5);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:hopper'), 6);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:wheat'), 25);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:farmland'), 25);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 10);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:stone_button'), 1);
+        assert.equal(plan.commands.filter(c => /^replaceitem block .* slot\.container 0 minecraft:water_bucket 1$/.test(c)).length, 5);
+      } else if (key === 'wool_farm') {
+        for (const [id, n] of [['minecraft:grass_block', 1], ['minecraft:observer', 1], ['minecraft:dispenser', 1], ['minecraft:rail', 1], ['minecraft:hopper', 2], ['minecraft:chest', 1], ['minecraft:redstone_wire', 1]]) {
+          assert.equal(countBlocks(placed, v => v === id), n, id);
+        }
+        assert.ok(plan.commands.some(c => /^summon minecraft:sheep -?\d+\.5 \d+ -?\d+\.5$/.test(c)));
+        assert.ok(plan.commands.some(c => /^summon minecraft:hopper_minecart /.test(c)));
+        assert.ok(plan.commands.some(c => c.endsWith('slot.container 0 minecraft:shears 1')));
+        assert.ok(plan.commands.indexOf(plan.commands.find(c => c.startsWith('summon minecraft:hopper_minecart'))) > plan.commands.findIndex(c => c.includes('minecraft:rail')), 'rail before cart');
+      } else if (key === 'cobble_generator') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 1);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:lava'), 1);
+        const lid = ctx.localPoint(plan.context, 4, 1, 1);
+        assert.equal(dimension.getBlock(lid).typeId, 'minecraft:smooth_stone', 'lava is covered');
+      } else if (key === 'smelter') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:furnace'), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:hopper'), 9);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 9);
+      } else if (key === 'water_source') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 4);
       } else if (key === 'street_lamps') {
         assert.equal(plan.count, 24);
         assert.equal(countBlocks(placed, v => v === 'minecraft:redstone_lamp'), 24);
@@ -948,18 +994,132 @@ test('contraption menu builds from its options form and then gives the railway m
   ctx.ItemStack = class { constructor(typeId, amount) { this.typeId = typeId; this.amount = amount; } };
   modalForm(ctx, [], [8, true, false]);
   const contraptions = vm.runInContext('CONTRAPTIONS', ctx);
-  ctx.openContraptionOptionsMenu(player, contraptions[5]);
+  const byKey = key => contraptions.find(c => c.key === key);
+  ctx.openContraptionOptionsMenu(player, byKey('railway'));
   for (let i = 0; i < 10; i++) await tick();
   assert.ok(player.messages.some(m => m.includes('railway built')), player.messages.join('\n'));
   assert.equal(given.length, 1);
   assert.equal(given[0].typeId, 'minecraft:minecart');
   assert.ok(player.messages.some(m => m.includes('minecart was added')));
   player.messages.length = 0;
+  modalForm(ctx, [], [1, false]);
+  ctx.openContraptionOptionsMenu(player, byKey('spawner_farm'));
+  for (let i = 0; i < 10; i++) await tick();
+  assert.ok(player.messages.some(m => m.includes('XP farm built')), player.messages.join('\n'));
+  assert.equal(given[1].typeId, 'minecraft:skeleton_spawn_egg');
+  player.messages.length = 0;
+  modalForm(ctx, [], [false]);
+  ctx.openContraptionOptionsMenu(player, byKey('water_source'));
+  for (let i = 0; i < 10; i++) await tick();
+  assert.ok(player.messages.some(m => m.includes('water source built')), player.messages.join('\n'));
+  player.messages.length = 0;
   dimension.getBlock = () => ({ isAir: true, typeId: 'minecraft:air' });
   modalForm(ctx, [], [12, false]);
-  ctx.openContraptionOptionsMenu(player, contraptions[4]);
+  ctx.openContraptionOptionsMenu(player, byKey('street_lamps'));
   for (let i = 0; i < 5; i++) await tick();
   assert.ok(player.messages.some(m => m.includes('No open ground')), player.messages.join('\n'));
+});
+
+function enchantingHarness() {
+  const h = harness();
+  const { ctx, player } = h;
+  const conflicts = [['mending', 'infinity'], ['fortune', 'silk_touch'], ['sharpness', 'smite'], ['sharpness', 'bane_of_arthropods'], ['depth_strider', 'frost_walker']];
+  class MockItem {
+    constructor(typeId, amount = 1) { this.typeId = typeId; this.amount = amount; this.enchantments = []; }
+    getComponent(name) {
+      if (name !== 'enchantable' || this.typeId.includes('dirt')) return undefined;
+      const list = this.enchantments;
+      return {
+        canAddEnchantment: e => !list.some(x => x.type === e.type) && !conflicts.some(([a, b]) => (e.type === a && list.some(x => x.type === b)) || (e.type === b && list.some(x => x.type === a))),
+        addEnchantment: e => { if (e.level < 1) throw new Error('bad level'); list.push({ type: e.type, level: e.level }); }
+      };
+    }
+  }
+  ctx.ItemStack = MockItem;
+  const equipment = {};
+  const inventory = [];
+  player.getComponent = name => {
+    if (name === 'equippable') return { getEquipment: slot => equipment[slot], setEquipment: (slot, item) => { equipment[slot] = item; return true; } };
+    if (name === 'inventory') return { container: { addItem: item => { inventory.push(item); return undefined; } } };
+    return undefined;
+  };
+  return { ...h, MockItem, equipment, inventory };
+}
+
+test('enchanting the held item applies the chosen level, caps at the top level, or adds everything compatible', async () => {
+  const { ctx, player, tick, MockItem, equipment } = enchantingHarness();
+  const all = vm.runInContext('ENCHANTMENT_OPTIONS', ctx);
+  equipment.Mainhand = new MockItem('minecraft:diamond_sword');
+  modalForm(ctx, [], [all.findIndex(o => o.id === 'sharpness'), 4, false]);
+  ctx.openEnchantHeldItemMenu(player);
+  await tick();
+  assert.equal(JSON.stringify(equipment.Mainhand.enchantments), JSON.stringify([{ type: 'sharpness', level: 5 }]));
+  assert.ok(player.messages.some(m => m.includes('Sharpness') && m.includes(' V')), player.messages.join('\n'));
+  const remaining = all.filter(o => o.id !== 'sharpness');
+  modalForm(ctx, [], [remaining.findIndex(o => o.id === 'mending'), 4, false]);
+  ctx.openEnchantHeldItemMenu(player);
+  await tick();
+  assert.equal(equipment.Mainhand.enchantments[1].level, 1, 'mending is capped at I');
+  modalForm(ctx, [], [0, 0, true]);
+  ctx.openEnchantHeldItemMenu(player);
+  await tick();
+  const ids = equipment.Mainhand.enchantments.map(e => e.type);
+  assert.ok(ids.includes('looting') && ids.includes('unbreaking') && !ids.includes('smite') && !ids.includes('infinity'), ids.join(' '));
+  assert.ok(equipment.Mainhand.enchantments.every(e => e.level === all.find(o => o.id === e.type).max));
+  player.messages.length = 0;
+  equipment.Mainhand = undefined;
+  ctx.openEnchantHeldItemMenu(player);
+  assert.ok(player.messages.some(m => m.includes('Hold the item')));
+  equipment.Mainhand = new MockItem('minecraft:dirt');
+  ctx.openEnchantHeldItemMenu(player);
+  assert.ok(player.messages.some(m => m.includes('cannot take')));
+});
+
+test('armour sets, tool kits and trim kits hand over the right items', () => {
+  const { ctx, player, equipment, inventory } = enchantingHarness();
+  const armour = ctx.giveArmourSet(player, 4, true, true);
+  assert.equal(Object.keys(equipment).sort().join(' '), 'Chest Feet Head Legs');
+  assert.equal(equipment.Head.typeId, 'minecraft:diamond_helmet');
+  assert.equal(equipment.Feet.typeId, 'minecraft:diamond_boots');
+  assert.equal(armour.enchantments, 18);
+  assert.ok(equipment.Feet.enchantments.some(e => e.type === 'feather_falling' && e.level === 4));
+  assert.ok(player.messages.some(m => m.includes('Diamond armour set') && m.includes('wearing')));
+  ctx.giveArmourSet(player, 3, false, false);
+  assert.equal(inventory.length, 4);
+  assert.equal(inventory[0].typeId, 'minecraft:golden_helmet');
+  assert.equal(inventory[0].enchantments.length, 0);
+  inventory.length = 0;
+  assert.equal(ctx.giveToolKit(player, 5, true), 19);
+  assert.equal(inventory.map(i => i.typeId).join(' '), 'minecraft:netherite_sword minecraft:netherite_pickaxe minecraft:netherite_axe minecraft:netherite_shovel minecraft:bow');
+  assert.ok(inventory[4].enchantments.some(e => e.type === 'infinity'));
+  inventory.length = 0;
+  const kit = ctx.giveTrimKit(player, 10, 5, 4);
+  assert.equal(kit.pattern.name, 'Silence');
+  assert.equal(inventory.map(i => `${i.typeId}x${i.amount}`).join(' '), 'minecraft:silence_armor_trim_smithing_template x4 minecraft:diamondx4 minecraft:smithing_tablex1'.replace(' x4', 'x4'));
+  assert.ok(player.messages.some(m => m.includes('smithing table')));
+});
+
+test('main and superpowers menus reach the enchanting tools', async () => {
+  const { ctx, player, tick } = harness();
+  const titles = [];
+  let selection = -1;
+  ctx.ActionFormData = class {
+    title(t) { titles.push(t); return this; } body() { return this; } button() { return this; }
+    show() { const chosen = selection; selection = -1; return Promise.resolve({ canceled: chosen < 0, selection: chosen }); }
+  };
+  selection = 6;
+  ctx.openMainMenu(player);
+  await tick();
+  assert.equal(titles[1], '✨ Enchant & Armour');
+  titles.length = 0; selection = 7;
+  ctx.openMainMenu(player);
+  await tick();
+  assert.ok(player.messages.some(m => m.includes('extra device') || m.includes('Could not access your inventory')), player.messages.join('\n'));
+  selection = 3;
+  ctx.openSuperpowersMenu(player);
+  await tick();
+  assert.ok(player.commands.includes('xp 30L @s'));
+  assert.ok(player.messages.some(m => m.includes('30 experience levels')));
 });
 
 test('modern city fits the village snapshot, builds with lifts, towers and furniture in all facings, and undoes', async () => {
