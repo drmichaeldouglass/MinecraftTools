@@ -2,6 +2,16 @@
 
 Release notes for the Helper Tools add-on, newest first. Each release bumps both pack manifests so Minecraft recognises the update.
 
+## Version 1.4.1 fixes
+
+- Fixed enchanting passing identifier strings where the Script API requires `EnchantmentType` objects. Held-item enchanting and enchanted armour/tool kits now resolve types through `EnchantmentTypes.get`, retain level caps and reject unavailable enchantments.
+- Auto-equipping armour now fills empty slots only. Existing armour and Elytra remain equipped; new pieces for occupied slots go into the inventory or drop at the player's feet if it is full. The menu explains this behaviour.
+- Draining now verifies no-op fills instead of ignoring every command error. Failed edits and unloaded target blocks stop the build, report the error and retain the undo snapshot.
+- Flood wheat farms now place the supporting row before the redstone dust, preventing unsupported wiring during construction.
+- Both manifests and all three rebuilt installers are version 1.4.1.
+
+Validation: all 56 mocked Script API regression tests pass. Six checks failed against the original source after strengthening the enchantment mock and adding regression cases. Coverage includes occupied armour slots with available and full inventories, unknown enchantments, drain failures and unavailable blocks, and flood-farm placement order at three widths in all four facings. Minecraft is not available in this environment. Check enchanting, armour grants, draining/undo and the flood-farm button in a disposable Minecraft world.
+
 ## Version 1.4.0 changes
 
 - 🔷 New **Shapes & Beacons** submenu under 🏗️ Builder Tools. Build a sphere, dome, stepped pyramid, cylinder or tower (height 1 makes a disc or ring) or cone, solid or hollow, in any block from the list or a typed block ID. Sizes go up to a radius of 25 and a pyramid base of 61. Hollow shapes are always one block thick with no gaps. Large shapes are built in batches over a few game ticks.
