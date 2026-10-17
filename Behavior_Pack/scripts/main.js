@@ -1108,9 +1108,9 @@ function pushShellCommands(commands, context, x1, y1, z1, x2, y2, z2, blockId) {
 
 /** Two-block door at local (x, y, z) whose walk-through direction is local (dx, dz). */
 function pushDoorCommands(commands, context, x, y, z, dx, dz, doorId) {
-  const code = DOOR_DIRECTION_CODES[worldDirectionKey(context, dx, dz)];
-  commands.push(setLocal(context, x, y, z, withBlockStates(doorId, { direction: code, door_hinge_bit: false, open_bit: false, upper_block_bit: false })));
-  commands.push(setLocal(context, x, y + 1, z, withBlockStates(doorId, { direction: code, door_hinge_bit: false, open_bit: false, upper_block_bit: true })));
+  const direction = DOOR_DIRECTION_NAMES[worldDirectionKey(context, dx, dz)];
+  commands.push(setLocal(context, x, y, z, withBlockStates(doorId, { "minecraft:cardinal_direction": direction, door_hinge_bit: false, open_bit: false, upper_block_bit: false })));
+  commands.push(setLocal(context, x, y + 1, z, withBlockStates(doorId, { "minecraft:cardinal_direction": direction, door_hinge_bit: false, open_bit: false, upper_block_bit: true })));
 }
 
 /** Smallest box that contains every block touched by the given fill/setblock commands. */
@@ -1271,13 +1271,20 @@ function executeBuildPlanUnlocked(player, plan, actionType, successMessage, soun
   }
   if (!validateBuildBounds(player, plan.bounds)) return;
   player.sendMessage(`§e🏗️ Building ${plan.name}...§r`);
+  let snapshotSaved = false;
   return captureUndoSnapshot(player, plan.bounds, actionType).then(async (record) => {
+    snapshotSaved = true;
     await runBuildCommands(getDimensionById(record.dimensionId), plan.commands, plan.batchSize || 0);
   }).then(() => {
     player.sendMessage(`§a${successMessage}§r`);
     player.playSound(sound, { volume: 1.0, pitch: 1.1 });
     return true;
   }).catch((err) => {
+    if (!snapshotSaved) {
+      // Nothing was changed, and Undo still holds the previous build, so do not suggest it.
+      player.sendMessage(`§cCould not save an undo snapshot of this area, so nothing was built: ${err}§r`);
+      return false;
+    }
     player.sendMessage(`§cBuild stopped because a command failed: ${err}§r`);
     player.sendMessage("§eUse Undo Last Build to restore the area.§r");
     return false;
@@ -1653,9 +1660,11 @@ function createTreeHousePlan(player) {
   q.push(fillLocal(c, 0, 12, 5, 10, 12, 14, "minecraft:dark_oak_planks"));
   q.push(fillLocal(c, 1, 13, 6, 9, 13, 13, "minecraft:oak_leaves"));
   q.push(fillLocal(c, 2, 14, 7, 8, 14, 12, "minecraft:oak_leaves"));
-  for (let step = 0; step <= 7; step++) {
-    q.push(fillLocal(c, 4, 0, step, 6, step, step, "minecraft:oak_planks"));
-    q.push(fillLocal(c, 4, step + 1, step, 6, step + 2, step, "minecraft:air"));
+  // Walk-up stairs: the last step is the threshold under the door, so the
+  // door is never cleared, and the other steps get three blocks of headroom.
+  for (let step = 0; step <= 6; step++) {
+    q.push(fillLocal(c, 4, 0, step, 6, step + 1, step, "minecraft:oak_planks"));
+    if (step < 6) q.push(fillLocal(c, 4, step + 2, step, 6, step + 4, step, "minecraft:air"));
   }
   q.push(setLocal(c, 3, 8, 11, "minecraft:crafting_table"), setLocal(c, 7, 8, 11, "minecraft:chest"));
   q.push(setLocal(c, 5, 11, 10, "minecraft:sea_lantern"));
@@ -1674,12 +1683,12 @@ function createBunkerPlan(player) {
   for (let step = 0; step <= 6; step++) {
     const y = -step;
     q.push(fillLocal(c, 4, -6, step, 6, y, step, "minecraft:stone_bricks"));
-    q.push(fillLocal(c, 4, y + 1, step, 6, y + 2, step, "minecraft:air"));
+    q.push(fillLocal(c, 4, y + 1, step, 6, y + 3, step, "minecraft:air"));
   }
   q.push(setLocal(c, 2, -5, 10, "minecraft:crafting_table"), setLocal(c, 3, -5, 10, "minecraft:furnace"));
   q.push(setLocal(c, 8, -5, 10, "minecraft:chest"));
   for (const [x, z] of [[3, 7], [7, 7], [3, 11], [7, 11]]) q.push(setLocal(c, x, -1, z, "minecraft:sea_lantern"));
-  return makePlan(player, "Underground Bunker", c, q, localBounds(c, 0, -6, 0, 10, 2, 12));
+  return makePlan(player, "Underground Bunker", c, q, localBounds(c, 0, -6, 0, 10, 3, 12));
 }
 
 // ==========================================
@@ -1744,12 +1753,18 @@ const VILLAGE_SHARED_BLOCKS = {
 
 const STAIR_DIRECTION_CODES = { "1,0": 0, "-1,0": 1, "0,1": 2, "0,-1": 3 };
 const BED_DIRECTION_CODES = { "0,1": 0, "-1,0": 1, "0,-1": 2, "1,0": 3 };
-const DOOR_DIRECTION_CODES = { "1,0": 0, "0,1": 1, "-1,0": 2, "0,-1": 3 };
+// Doors use `minecraft:cardinal_direction` since Bedrock 1.21.60 (the integer
+// `direction` state is rejected). Their names are a quarter turn from the
+// walk-through direction: walking east is "south", south is "west", and so on.
+const DOOR_DIRECTION_NAMES = { "1,0": "south", "0,1": "west", "-1,0": "north", "0,-1": "east" };
 // Integer `facing_direction` used by ladders, pistons, dispensers, hoppers and
 // buttons: 0 down, 1 up, then north, south, west, east. A ladder faces away
 // from the wall it hangs on; a piston or dispenser faces where it pushes or shoots.
 const FACING_DIRECTION_CODES = { "0,-1": 2, "0,1": 3, "-1,0": 4, "1,0": 5 };
 const FACING_DOWN = 0, FACING_UP = 1;
+// Pistons are the exception: their horizontal `facing_direction` values are
+// swapped (2 pushes south, 3 north, 4 east, 5 west).
+const PISTON_FACING_CODES = { "0,1": 2, "0,-1": 3, "1,0": 4, "-1,0": 5 };
 const CARDINAL_DIRECTION_NAMES = { "1,0": "east", "-1,0": "west", "0,1": "south", "0,-1": "north" };
 
 function withBlockStates(blockId, states) {
@@ -2365,8 +2380,9 @@ function drawTower(v, opts) {
   v.fill(x0, 0, 0, x1, 0, 1, b.sidewalk);
   v.fill(x0, 1, 0, x0 + 3, 1, 0, b.leaves);
   v.fill(x1 - 3, 1, 0, x1, 1, 0, b.leaves);
-  v.lampPost(x0 + 5, 0);
-  v.lampPost(x1 - 5, 0);
+  // Either side of the entrance canopy (x 5 to 9), which would cover the lanterns.
+  v.lampPost(x0 + 4, 0);
+  v.lampPost(x1 - 4, 0);
   // Shell, then each storey carved out with glass bands and concrete piers.
   v.bigFill(x0, 0, z0, x1, top, z1, s.wall);
   for (let f = 0; f < floors; f++) {
@@ -2505,15 +2521,16 @@ function drawMall(v) {
   v.fill(7, 0, 9, 9, 0, 11, b.water);
   v.fill(7, 1, 9, 9, 1, 11, b.air);
   v.set(8, 0, 10, b.light);
-  // Ground-floor stalls along both sides.
+  // Ground-floor stalls along both sides. The escalator takes the front right
+  // corner (x 13 and 14, z 3 to 6), so that side has no stall counter there.
   for (const z of [4, 8, 12]) {
     for (const x of [1, 15]) v.fill(x, 1, z, x, 2, z + 2, "minecraft:bookshelf");
     for (let n = 0; n <= 2; n++) {
       v.table(3, 1, z + n);
-      v.table(13, 1, z + n);
+      if (z > 4) v.table(13, 1, z + n);
     }
     v.seat(4, 1, z + 1, -1, 0);
-    v.seat(12, 1, z + 1, 1, 0);
+    if (z > 4) v.seat(12, 1, z + 1, 1, 0);
     v.lamp(2, 1, z + 3 > 15 ? 15 : z + 3);
     v.lamp(14, 1, z + 3 > 15 ? 15 : z + 3);
   }
@@ -2629,12 +2646,13 @@ function drawRestaurant(v) {
     v.seat(x + 1, 1, z, -1, 0);
   }
   v.lamp(1, 1, 3);
-  v.lamp(13, 1, 3);
+  v.lamp(11, 1, 3);
   v.fill(1, 1, 12, 1, 2, 12, "minecraft:bookshelf");
   v.set(13, 1, 12, "minecraft:cake");
-  for (const [x, z] of [[3, 6], [11, 6], [7, 10]]) v.set(x, 5, z, b.light);
-  // Rooftop terrace: railing, internal stairs, pergola and tables.
+  // Rooftop terrace: railing, internal stairs, pergola and tables. The dining
+  // room lights go into the terrace floor once it exists.
   v.fill(0, 5, 2, 14, 5, 14, p.upperFloor);
+  for (const [x, z] of [[3, 6], [11, 6], [7, 10]]) v.set(x, 5, z, b.light);
   v.fill(0, 6, 2, 14, 6, 2, p.fence);
   v.fill(0, 6, 14, 14, 6, 14, p.fence);
   v.fill(0, 6, 3, 0, 6, 13, p.fence);
@@ -2866,8 +2884,9 @@ function drawCottage(v) {
 function drawAFrameCabin(v) {
   const { p, b } = v;
   v.fill(3, 0, 0, 5, 0, 0, b.path);
-  v.lampPost(1, 0);
-  v.lampPost(7, 0);
+  // Short posts: the roof stairs above x = 1 and x = 7 start at y = 3.
+  v.lampPost(1, 0, 1);
+  v.lampPost(7, 0, 1);
   v.fill(0, 0, 1, 8, 0, 9, p.floor);
   // Roof: two levels per step so the inside is tall enough to stand in.
   for (let i = 0; i <= 3; i++) {
@@ -3685,7 +3704,7 @@ function createSugarCaneFarmPlan(player, width, cropIndex = 0) {
   q.push(fillLocal(c, 1, 1, 3, width, 2, 4, CONTRAPTION_BASE));
   q.push(fillLocal(c, 1, 3, 4, width, 3, 4, CONTRAPTION_BASE));
   for (let x = 1; x <= width; x++) {
-    q.push(setLocal(c, x, 3, 3, withBlockStates("minecraft:piston", { facing_direction: facingCode(c, 0, -1) })));
+    q.push(setLocal(c, x, 3, 3, withBlockStates("minecraft:piston", { facing_direction: PISTON_FACING_CODES[worldDirectionKey(c, 0, -1)] })));
     q.push(setLocal(c, x, 4, 3, withBlockStates("minecraft:observer", { "minecraft:facing_direction": facingName(c, 0, -1), powered_bit: false })));
     q.push(setLocal(c, x, 4, 4, "minecraft:redstone_wire"));
   }
@@ -3877,19 +3896,25 @@ function createWoolFarmPlan(player) {
   return plan;
 }
 
-/** Water meets lava in a stone trench; cobblestone forms next to the lava and regrows when mined. */
+/**
+ * Water meets lava in a stone trench; cobblestone forms next to the lava and
+ * regrows when mined. The water falls into a one-block pit next to its source
+ * and stops there: water that reached the lava source itself would turn it
+ * into obsidian and the generator would never work.
+ */
 function createCobbleGeneratorPlan(player) {
   const c = createOrientedBuildContext(player, 6, 3, -1);
   const q = [];
   q.push(fillLocal(c, 0, 1, 0, 5, 2, 2, "minecraft:air"));
-  q.push(fillLocal(c, 0, -1, 0, 5, 0, 2, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, -2, 0, 5, 0, 2, CONTRAPTION_BASE));
   q.push(fillLocal(c, 1, 0, 1, 4, 0, 1, "minecraft:air"));
+  q.push(setLocal(c, 2, -1, 1, "minecraft:air"));
   q.push(setLocal(c, 1, 0, 1, "minecraft:water"));
   q.push(setLocal(c, 4, 0, 1, "minecraft:lava"));
   q.push(setLocal(c, 4, 1, 1, CONTRAPTION_BASE));
   q.push(fillLocal(c, 5, 1, 0, 5, 1, 2, CONTRAPTION_BASE));
   q.push(setLocal(c, 0, 1, 1, "minecraft:lantern"));
-  const plan = makePlan(player, "Cobblestone Generator", c, q, localBounds(c, 0, -1, 0, 5, 2, 2));
+  const plan = makePlan(player, "Cobblestone Generator", c, q, localBounds(c, 0, -2, 0, 5, 2, 2));
   plan.batchSize = CONTRAPTION_BATCH_SIZE;
   return plan;
 }
@@ -4173,7 +4198,7 @@ function openStairBuilderMenu(player, direction) {
     .dropdown("Stair Material:", materials.map((v) => v.name), { defaultValueIndex: 0 })
     .slider("Width:", 1, 5, { valueStep: 2, defaultValue: 3 })
     .slider("Number of Steps:", 3, 25, { valueStep: 1, defaultValue: 8 })
-    .toggle("Clear Two Blocks of Headroom", { defaultValue: true })
+    .toggle("Clear Headroom (3 blocks, enough to walk the steps)", { defaultValue: true })
     .toggle("✨ Show 3D Preview First", { defaultValue: true });
   form.show(player).then((response) => {
     if (response.canceled) return;
@@ -4193,12 +4218,14 @@ function createStairPlan(player, width, steps, material, direction, clearHeadroo
   for (let step = 0; step < steps; step++) {
     const y = step * stepDirection;
     q.push(fillLocal(c, 0, y, step, width - 1, y, step, material));
-    if (clearHeadroom) q.push(fillLocal(c, 0, y + 1, step, width - 1, y + 2, step, "minecraft:air"));
+    // Walking between one-block steps needs three blocks of air above each
+    // step: two would leave a block at head height in front of the player.
+    if (clearHeadroom) q.push(fillLocal(c, 0, y + 1, step, width - 1, y + 3, step, "minecraft:air"));
   }
   const endY = (steps - 1) * stepDirection;
   return {
     name: "staircase", dimensionId: player.dimension.id, steps, commands: q,
-    bounds: localBounds(c, 0, Math.min(0, endY), 0, width - 1, Math.max(0, endY) + (clearHeadroom ? 2 : 0), steps - 1)
+    bounds: localBounds(c, 0, Math.min(0, endY), 0, width - 1, Math.max(0, endY) + (clearHeadroom ? 3 : 0), steps - 1)
   };
 }
 

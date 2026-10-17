@@ -788,7 +788,7 @@ test('house designs build with real doors in every facing and style, then undo',
       const { blocks } = blockWorld(dimension);
       const plan = ctx.createBaseTemplatePlan(player, key, f % paletteCount);
       assertCommandsInside(ctx, plan, limit);
-      assert.ok(plan.commands.some(c => /minecraft:[a-z_]*door \["direction"=\d,"door_hinge_bit"=false,"open_bit"=false,"upper_block_bit"=false\]/.test(c)), `${key} has a door`);
+      assert.ok(plan.commands.some(c => /minecraft:[a-z_]*door \["minecraft:cardinal_direction"="(north|south|east|west)","door_hinge_bit"=false,"open_bit"=false,"upper_block_bit"=false\]/.test(c)), `${key} has a door`);
       await settle(ctx.executeBuildPlan(player, plan, `house_${key}`, 'House done'), tick);
       assert.ok(player.messages.some(m => m.includes('House done')), `${key}: ${player.messages.join('\n')}`);
       assert.ok(!player.messages.some(m => m.includes('command failed')), key);
@@ -920,7 +920,8 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
         const piston = plan.commands.find(c => c.includes('minecraft:piston'));
         const observer = plan.commands.find(c => c.includes('minecraft:observer'));
-        const towardsPlayer = { '1,0': [4, 'west'], '-1,0': [5, 'east'], '0,1': [2, 'north'], '0,-1': [3, 'south'] }[`${FACINGS[f].x},${FACINGS[f].z}`];
+        // Bedrock pistons swap their horizontal facing_direction values (2 south, 3 north, 4 east, 5 west).
+        const towardsPlayer = { '1,0': [5, 'west'], '-1,0': [4, 'east'], '0,1': [3, 'north'], '0,-1': [2, 'south'] }[`${FACINGS[f].x},${FACINGS[f].z}`];
         assert.ok(piston.includes(`"facing_direction"=${towardsPlayer[0]}`), piston);
         assert.ok(observer.includes(`"minecraft:facing_direction"="${towardsPlayer[1]}"`), observer);
       } else if (key === 'spawner_farm') {
@@ -1341,4 +1342,147 @@ test('flood farm places support blocks before redstone in every facing and width
     }
     assert.equal(wires, width);
   }
+});
+
+// Replays block commands in order and returns every single-block placement that
+// a later command replaces with something else.
+function overwrittenPlacements(ctx, commands) {
+  const owner = new Map();
+  const lost = [];
+  commands.forEach((command, i) => {
+    const c = ctx.parseBlockCommand(command);
+    if (!c) return;
+    const single = c.x1 === c.x2 && c.y1 === c.y2 && c.z1 === c.z2;
+    for (let x = c.x1; x <= c.x2; x++) for (let y = c.y1; y <= c.y2; y++) for (let z = c.z1; z <= c.z2; z++) {
+      const boundary = x === c.x1 || x === c.x2 || y === c.y1 || y === c.y2 || z === c.z1 || z === c.z2;
+      if (c.mode === 'outline' && !boundary) continue;
+      const key = `${x},${y},${z}`;
+      const prev = owner.get(key);
+      if (c.mode === 'keep' && prev && prev.block !== 'minecraft:air') continue;
+      if (c.filterId && (!prev || prev.block !== c.filterId)) continue;
+      const block = c.mode === 'hollow' && !boundary ? 'minecraft:air' : c.blockId;
+      // Without custom furniture a desk computer (lectern) deliberately replaces the table's pressure plate.
+      const standIn = prev && prev.block === 'minecraft:wooden_pressure_plate' && block === 'minecraft:lectern';
+      if (prev && prev.single && prev.block !== block && prev.block !== 'minecraft:air' && !standIn) {
+        lost.push(`${commands[prev.i]} replaced by ${command}`);
+      }
+      owner.set(key, { i, block, single });
+    }
+  });
+  return lost;
+}
+
+test('no door, lamp, light or furniture placed by a build is overwritten later in the same build', () => {
+  for (const facing of FACINGS) {
+    const { ctx, player, evaluate } = harness();
+    player.getViewDirection = () => facing;
+    const plans = [];
+    for (const key of ['simple_house', 'large_house', 'fort', 'tree_house', 'bunker']) plans.push([key, ctx.createBaseTemplatePlan(player, key)]);
+    for (const key of evaluate('HOUSE_DESIGNS.map(d => d.key)')) for (const furniture of [true, false]) {
+      plans.push([`${key} furniture=${furniture}`, ctx.createHouseDesignPlan(player, key, 0, furniture)]);
+    }
+    for (const layout of ['village', 'city']) for (const furniture of [true, false]) {
+      plans.push([`${layout} furniture=${furniture}`, ctx.createVillagePlan(player, 0, true, layout, furniture)]);
+    }
+    for (const [name, plan] of plans) assert.deepEqual(overwrittenPlacements(ctx, plan.commands), [], name);
+  }
+});
+
+test('doors use the cardinal direction state that replaced the integer direction', () => {
+  for (const facing of FACINGS) {
+    const { ctx, player, evaluate } = harness();
+    player.getViewDirection = () => facing;
+    const plans = [ctx.createBaseTemplatePlan(player, 'simple_house'), ctx.createAutoDoorPlan(player, 'minecraft:stone_bricks', 'plates')];
+    for (const key of evaluate('HOUSE_DESIGNS.map(d => d.key)')) plans.push(ctx.createHouseDesignPlan(player, key, 0));
+    for (const plan of plans) {
+      const doors = plan.commands.filter(c => /_door /.test(c));
+      assert.ok(doors.length >= 2);
+      for (const door of doors) {
+        assert.ok(!/"direction"=/.test(door), door);
+        assert.ok(/"minecraft:cardinal_direction"="(north|south|east|west)"/.test(door), door);
+      }
+    }
+    // A door walked through away from the player keeps the orientation the integer state used to give.
+    const door = ctx.createBaseTemplatePlan(player, 'simple_house').commands.find(c => c.includes('wooden_door'));
+    const expected = { '1,0': 'south', '0,1': 'west', '-1,0': 'north', '0,-1': 'east' }[`${facing.x},${facing.z}`];
+    assert.ok(door.includes(`"minecraft:cardinal_direction"="${expected}"`), door);
+  }
+});
+
+test('tree house keeps both halves of its door and its stairs reach the threshold', async () => {
+  for (const facing of FACINGS) {
+    const { ctx, player, dimension } = harness();
+    player.getViewDirection = () => facing;
+    const { blocks, states } = blockWorld(dimension);
+    const plan = ctx.createBaseTemplatePlan(player, 'tree_house');
+    await ctx.executeBuildPlan(player, plan, 'tree_house', 'done');
+    const at = (x, y, z) => ctx.localPoint(plan.context, x, y, z);
+    const key = p => `${p.x},${p.y},${p.z}`;
+    assert.equal(blocks.get(key(at(5, 8, 6))), 'minecraft:wooden_door');
+    assert.equal(states.get(key(at(5, 8, 6))).upper_block_bit, false);
+    assert.equal(blocks.get(key(at(5, 9, 6))), 'minecraft:wooden_door');
+    assert.equal(states.get(key(at(5, 9, 6))).upper_block_bit, true);
+    assert.equal(blocks.get(key(at(5, 7, 6))), 'minecraft:oak_planks', 'threshold under the door');
+    for (let step = 0; step <= 5; step++) {
+      assert.equal(blocks.get(key(at(5, step + 1, step))), 'minecraft:oak_planks', `step ${step}`);
+      for (let h = 2; h <= 4; h++) assert.equal(dimension.getBlock(at(5, step + h, step)).typeId, 'minecraft:air', `headroom ${step}/${h}`);
+    }
+  }
+});
+
+test('staircases clear three blocks of headroom so they can be walked in solid ground', async () => {
+  for (const direction of ['up', 'down']) for (const facing of FACINGS) {
+    const { ctx, player, dimension } = harness();
+    player.getViewDirection = () => facing;
+    player.location = { x: 0, y: 40, z: 0 };
+    const { blocks } = blockWorld(dimension);
+    const plan = ctx.createStairPlan(player, 3, 6, 'minecraft:stone_bricks', direction, true);
+    await ctx.executeBuildPlan(player, plan, 'stairs', 'done');
+    assert.ok(player.messages.some(m => m.includes('done')), player.messages.join('\n'));
+    const c = ctx.createOrientedBuildContext(player, 3, 6, -1);
+    for (let step = 0; step < 6; step++) {
+      const y = direction === 'down' ? -step : step;
+      assert.equal(blocks.get(Object.values(ctx.localPoint(c, 1, y, step)).join(',')), 'minecraft:stone_bricks');
+      for (let h = 1; h <= 3; h++) assert.equal(dimension.getBlock(ctx.localPoint(c, 1, y + h, step)).typeId, 'minecraft:air', `${direction} ${step}/${h}`);
+    }
+  }
+});
+
+test('bunker stairs have three blocks of headroom', () => {
+  const { ctx, player } = harness();
+  const plan = ctx.createBaseTemplatePlan(player, 'bunker');
+  for (let step = 0; step <= 6; step++) {
+    const clear = plan.commands.find(cmd => cmd === ctx.fillLocal(plan.context, 4, -step + 1, step, 6, -step + 3, step, 'minecraft:air'));
+    assert.ok(clear, `step ${step}`);
+  }
+});
+
+test('cobblestone generator keeps the water away from the lava source', () => {
+  for (const facing of FACINGS) {
+    const { ctx, player } = harness();
+    player.getViewDirection = () => facing;
+    const plan = ctx.createCobbleGeneratorPlan(player);
+    const final = new Map();
+    for (const command of plan.commands) {
+      const c = ctx.parseBlockCommand(command);
+      for (let x = c.x1; x <= c.x2; x++) for (let y = c.y1; y <= c.y2; y++) for (let z = c.z1; z <= c.z2; z++) final.set(`${x},${y},${z}`, c.blockId);
+    }
+    const get = (x, y, z) => final.get(Object.values(ctx.localPoint(plan.context, x, y, z)).join(','));
+    assert.equal(get(1, 0, 1), 'minecraft:water');
+    assert.equal(get(2, 0, 1), 'minecraft:air', 'water flows here');
+    assert.equal(get(2, -1, 1), 'minecraft:air', 'and falls into the pit instead of reaching the lava');
+    assert.equal(get(2, -2, 1), 'minecraft:smooth_stone', 'pit floor');
+    assert.equal(get(3, 0, 1), 'minecraft:air', 'cobblestone forms here');
+    assert.equal(get(3, -1, 1), 'minecraft:smooth_stone');
+    assert.equal(get(4, 0, 1), 'minecraft:lava');
+  }
+});
+
+test('a failed snapshot does not tell the player to undo a previous build', async () => {
+  const { ctx, player, dimension } = harness();
+  dimension.runCommand = () => { throw new Error('unloaded'); };
+  const plan = ctx.createBaseTemplatePlan(player, 'simple_house');
+  assert.equal(await ctx.executeBuildPlan(player, plan, 'simple_house', 'done'), false);
+  assert.ok(player.messages.some(m => m.includes('nothing was built')));
+  assert.ok(!player.messages.some(m => m.includes('Undo')));
 });
