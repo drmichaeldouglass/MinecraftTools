@@ -640,6 +640,7 @@ test('drain plan covers every liquid around the player, survives empty boxes and
   assert.equal([...covered.keys()].sort().join(' '), 'minecraft:bubble_column minecraft:flowing_lava minecraft:flowing_water minecraft:lava minecraft:water');
   for (const rows of covered.values()) assert.equal(rows.size, 51);
   const commands = [];
+  dimension.getBlock = () => ({ typeId: 'minecraft:air', isAir: true });
   dimension.runCommand = c => {
     commands.push(c);
     if (c.startsWith('fill') && !c.endsWith('minecraft:water')) throw new Error('No blocks filled');
@@ -1023,6 +1024,16 @@ test('contraption menu builds from its options form and then gives the railway m
 function enchantingHarness() {
   const h = harness();
   const { ctx, player } = h;
+  // Match the native API contract: Enchantment.type is an EnchantmentType,
+  // not an identifier string. Keep the stored assertions readable with IDs.
+  const types = new Map(h.evaluate('ENCHANTMENT_OPTIONS').map(o => [o.id, { id: o.id, maxLevel: o.max }]));
+  ctx.EnchantmentTypes = { get: id => types.get(id.replace(/^minecraft:/, '')) };
+  function enchantmentId(e) {
+    if (!e.type || typeof e.type !== 'object' || types.get(e.type.id) !== e.type) {
+      throw new TypeError('Enchantment.type must be an EnchantmentType');
+    }
+    return e.type.id;
+  }
   const conflicts = [['mending', 'infinity'], ['fortune', 'silk_touch'], ['sharpness', 'smite'], ['sharpness', 'bane_of_arthropods'], ['depth_strider', 'frost_walker']];
   class MockItem {
     constructor(typeId, amount = 1) { this.typeId = typeId; this.amount = amount; this.enchantments = []; }
@@ -1030,8 +1041,15 @@ function enchantingHarness() {
       if (name !== 'enchantable' || this.typeId.includes('dirt')) return undefined;
       const list = this.enchantments;
       return {
-        canAddEnchantment: e => !list.some(x => x.type === e.type) && !conflicts.some(([a, b]) => (e.type === a && list.some(x => x.type === b)) || (e.type === b && list.some(x => x.type === a))),
-        addEnchantment: e => { if (e.level < 1) throw new Error('bad level'); list.push({ type: e.type, level: e.level }); }
+        canAddEnchantment: e => {
+          const id = enchantmentId(e);
+          return !list.some(x => x.type === id) && !conflicts.some(([a, b]) => (id === a && list.some(x => x.type === b)) || (id === b && list.some(x => x.type === a)));
+        },
+        addEnchantment: e => {
+          const id = enchantmentId(e);
+          if (e.level < 1 || e.level > e.type.maxLevel) throw new Error('bad level');
+          list.push({ type: id, level: e.level });
+        }
       };
     }
   }
@@ -1235,4 +1253,92 @@ test('furniture blocks are defined consistently across both packs', () => {
     assert.ok(block.description.traits, `${id} is directional`);
   }
   assert.ok(ctx.parseBlockCommand('setblock 0 64 0 tools:chair ["minecraft:cardinal_direction"="north"]'));
+});
+
+test('unknown enchantments are rejected without modifying the item', () => {
+  const { ctx, MockItem } = enchantingHarness();
+  const item = new MockItem('minecraft:diamond_sword');
+  assert.equal(ctx.canEnchant(item, 'missing_enchantment'), false);
+  assert.equal(ctx.applyEnchantment(item, 'missing_enchantment', 5), false);
+  assert.equal(item.enchantments.length, 0);
+});
+
+test('auto-equip preserves occupied slots and gives the remaining armour pieces', () => {
+  const { ctx, player, MockItem, equipment, inventory } = enchantingHarness();
+  const oldHelmet = new MockItem('minecraft:netherite_helmet');
+  oldHelmet.nameTag = 'Keep my helmet';
+  oldHelmet.enchantments.push({ type: 'protection', level: 4 });
+  const elytra = new MockItem('minecraft:elytra');
+  equipment.Head = oldHelmet;
+  equipment.Chest = elytra;
+  const result = ctx.giveArmourSet(player, 4, false, true);
+  assert.equal(equipment.Head, oldHelmet);
+  assert.equal(equipment.Chest, elytra);
+  assert.equal(equipment.Legs.typeId, 'minecraft:diamond_leggings');
+  assert.equal(equipment.Feet.typeId, 'minecraft:diamond_boots');
+  assert.equal(result.outcomes.equipped, 2);
+  assert.equal(result.outcomes.given, 2);
+  assert.deepEqual(inventory.map(i => i.typeId), ['minecraft:diamond_helmet', 'minecraft:diamond_chestplate']);
+});
+
+test('occupied armour stays equipped when the inventory is full', () => {
+  const { ctx, player, MockItem, equipment, dimension } = enchantingHarness();
+  const oldHelmet = new MockItem('minecraft:netherite_helmet');
+  equipment.Head = oldHelmet;
+  const getComponent = player.getComponent;
+  player.getComponent = name => name === 'inventory'
+    ? { container: { addItem: item => item } } : getComponent(name);
+  const dropped = [];
+  dimension.spawnItem = item => dropped.push(item);
+  const newHelmet = new MockItem('minecraft:diamond_helmet');
+  assert.equal(ctx.equipOrGive(player, newHelmet, 'Head'), 'dropped');
+  assert.equal(equipment.Head, oldHelmet);
+  assert.deepEqual(dropped, [newHelmet]);
+});
+
+test('draining stops on real failures, reports them, and preserves undo', async () => {
+  for (const unavailable of [false, true]) {
+    const { ctx, player, dimension, tick } = harness();
+    const commands = [];
+    dimension.getBlock = () => {
+      if (unavailable) throw new Error('chunk unloaded');
+      return { typeId: 'minecraft:water', isAir: false };
+    };
+    dimension.runCommand = command => {
+      commands.push(command);
+      if (command.startsWith('fill')) throw new Error('drain failed');
+      return { successCount: 1 };
+    };
+    const plan = ctx.createDrainPlan(player, 3, 2);
+    const completed = await settle(ctx.executeBuildPlan(player, plan, 'drain', 'Drained'), tick);
+    assert.equal(completed, false);
+    assert.ok(player.messages.some(m => m.includes('command failed')));
+    assert.ok(!player.messages.some(m => m.includes('Drained')));
+    assert.equal(commands.filter(c => c.startsWith('fill')).length, 1);
+    await ctx.executeUndo(player);
+    assert.ok(commands.some(c => c.startsWith('structure load')));
+  }
+});
+
+test('flood farm places support blocks before redstone in every facing and width', () => {
+  for (const facing of FACINGS) for (const width of [3, 6, 9]) {
+    const { ctx, player } = harness();
+    player.getViewDirection = () => facing;
+    const plan = ctx.createFloodFarmPlan(player, width);
+    const placed = new Map();
+    let wires = 0;
+    for (const command of plan.commands) {
+      const c = ctx.parseBlockCommand(command);
+      if (!c) continue;
+      for (let x = c.x1; x <= c.x2; x++) for (let y = c.y1; y <= c.y2; y++) for (let z = c.z1; z <= c.z2; z++) {
+        if (c.blockId === 'minecraft:redstone_wire') {
+          const below = placed.get(`${x},${y - 1},${z}`);
+          assert.ok(below && below !== 'minecraft:air', `wire at ${x},${y},${z} must already have support`);
+          wires++;
+        }
+        placed.set(`${x},${y},${z}`, c.blockId);
+      }
+    }
+    assert.equal(wires, width);
+  }
 });

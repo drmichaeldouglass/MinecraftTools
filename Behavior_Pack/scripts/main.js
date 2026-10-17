@@ -1255,18 +1255,13 @@ async function runBlockCommand(dimension, command) {
  * next game tick after every batch so that large plans (such as a whole
  * village) are spread over several ticks instead of stalling one.
  */
-async function runBuildCommands(dimension, commands, batchSize = 0, tolerateFailures = false) {
-  let failures = 0;
+async function runBuildCommands(dimension, commands, batchSize = 0) {
   for (let i = 0; i < commands.length; i++) {
     if (batchSize > 0 && i > 0 && i % batchSize === 0) await nextTick();
-    if (tolerateFailures) {
-      // Filtered fills fail when nothing matched; that is the expected outcome for most boxes.
-      try { await runCommand(dimension, commands[i]); } catch (e) { failures++; }
-    } else {
-      await runBlockCommand(dimension, commands[i]);
-    }
+    // Filtered fills use the same verified no-op check as other builds.
+    // Unloaded chunks and failed edits must still stop the operation.
+    await runBlockCommand(dimension, commands[i]);
   }
-  return failures;
 }
 
 function executeBuildPlanUnlocked(player, plan, actionType, successMessage, sound = "dig.stone") {
@@ -1277,7 +1272,7 @@ function executeBuildPlanUnlocked(player, plan, actionType, successMessage, soun
   if (!validateBuildBounds(player, plan.bounds)) return;
   player.sendMessage(`§e🏗️ Building ${plan.name}...§r`);
   return captureUndoSnapshot(player, plan.bounds, actionType).then(async (record) => {
-    await runBuildCommands(getDimensionById(record.dimensionId), plan.commands, plan.batchSize || 0, Boolean(plan.tolerateFailures));
+    await runBuildCommands(getDimensionById(record.dimensionId), plan.commands, plan.batchSize || 0);
   }).then(() => {
     player.sendMessage(`§a${successMessage}§r`);
     player.playSound(sound, { volume: 1.0, pitch: 1.1 });
@@ -3518,7 +3513,7 @@ function createDrainPlan(player, radius, choiceIndex) {
   for (const liquid of choice.blocks) pushLargeWorldFill(commands, bounds, "minecraft:air", `replace ${liquid}`);
   return {
     name: `${choice.label} drain`, dimensionId: player.dimension.id, commands, bounds,
-    batchSize: 5, tolerateFailures: true, radius, label: choice.label
+    batchSize: 5, radius, label: choice.label
   };
 }
 
@@ -3827,11 +3822,12 @@ function createFloodFarmPlan(player, width) {
   q.push(fillLocal(c, 1, 0, 6, width, 0, 7, farmland));
   q.push(fillLocal(c, 1, 1, 6, width, 1, 7, wheat));
   q.push(fillLocal(c, 1, 0, 8, width, 0, 8, "minecraft:water"));
+  // Dust needs its supporting blocks in place before it is placed.
+  q.push(fillLocal(c, 1, 1, 10, endX, 1, 10, CONTRAPTION_BASE));
   for (let x = 1; x <= width; x++) {
     q.push(setLocal(c, x, 1, 9, withBlockStates("minecraft:dispenser", { facing_direction: facingCode(c, 0, -1), triggered_bit: false })));
     q.push(setLocal(c, x, 2, 10, "minecraft:redstone_wire"));
   }
-  q.push(fillLocal(c, 1, 1, 10, endX, 1, 10, CONTRAPTION_BASE));
   q.push(setLocal(c, endX, 2, 10, withBlockStates("minecraft:stone_button", { facing_direction: FACING_UP, button_pressed_bit: false })));
   q.push(setLocal(c, 0, 2, 4, "minecraft:lantern"));
   q.push(setLocal(c, endX, 2, 4, "minecraft:lantern"));
@@ -5004,7 +5000,9 @@ function applyEnchantment(item, id, level) {
   try {
     const enchantable = item.getComponent("enchantable");
     if (!enchantable) return false;
-    const enchantment = { type: id, level: clampNumber(Math.round(level), 1, enchantmentTopLevel(id)) };
+    const type = EnchantmentTypes.get(id);
+    if (!type) return false;
+    const enchantment = { type, level: clampNumber(Math.round(level), 1, type.maxLevel) };
     if (!enchantable.canAddEnchantment(enchantment)) return false;
     enchantable.addEnchantment(enchantment);
     return true;
@@ -5016,7 +5014,8 @@ function applyEnchantment(item, id, level) {
 function canEnchant(item, id) {
   try {
     const enchantable = item.getComponent("enchantable");
-    return Boolean(enchantable && enchantable.canAddEnchantment({ type: id, level: 1 }));
+    const type = EnchantmentTypes.get(id);
+    return Boolean(enchantable && type && enchantable.canAddEnchantment({ type, level: 1 }));
   } catch (e) {
     return false;
   }
@@ -5043,12 +5042,14 @@ function getHeldItem(player) {
   return { item: container.getItem(slot), save: (item) => container.setItem(slot, item) };
 }
 
-/** Equips an item in an armour slot, or puts it in the inventory. Returns "equipped", "given" or "dropped". */
+/** Fills an empty armour slot, or gives the item without replacing existing gear. */
 function equipOrGive(player, item, slot) {
   if (slot) {
     try {
       const equippable = player.getComponent("equippable");
-      if (equippable && typeof equippable.setEquipment === "function" && equippable.setEquipment(slot, item) !== false) return "equipped";
+      if (equippable && typeof equippable.getEquipment === "function" &&
+          typeof equippable.setEquipment === "function" && !equippable.getEquipment(slot) &&
+          equippable.setEquipment(slot, item) !== false) return "equipped";
     } catch (e) {}
   }
   try {
@@ -5143,7 +5144,9 @@ function giveArmourSet(player, materialIndex, enchant, equip) {
     outcomes[equipOrGive(player, item, equip ? piece.slot : null)]++;
   }
   const where = outcomes.equipped === ARMOUR_PIECES.length ? "You are wearing it now."
-    : outcomes.dropped ? "Your inventory was full, so some pieces were dropped at your feet." : "It is in your inventory.";
+    : outcomes.dropped ? "Empty armour slots were filled where requested. Your inventory was full, so some pieces were dropped at your feet."
+    : outcomes.equipped ? "Empty armour slots were filled; the remaining pieces are in your inventory."
+    : "It is in your inventory.";
   player.sendMessage(`§a🛡️ ${material.name.replace(/ \S+$/, "")} armour set ready${enchant ? ` with ${enchantments} enchantments` : ""}! ${where}§r`);
   player.playSound("random.levelup", { volume: 0.9, pitch: 1.3 });
   return { enchantments, outcomes };
@@ -5154,7 +5157,7 @@ function openArmourSetMenu(player) {
     .title("🛡️ Full Armour Set")
     .dropdown("Armour material:", ARMOUR_MATERIALS.map((m) => m.name), { defaultValueIndex: 4 })
     .toggle("✨ Enchant it (Protection IV, Unbreaking III, Mending and more)", { defaultValue: true })
-    .toggle("👕 Put it on straight away", { defaultValue: true });
+    .toggle("👕 Equip empty armour slots (keep the gear I am wearing)", { defaultValue: true });
   form.show(player).then((response) => {
     if (response.canceled) return;
     const [materialIndex, enchant, equip] = response.formValues;

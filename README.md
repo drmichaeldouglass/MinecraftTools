@@ -1,6 +1,6 @@
 # 🪄 Helper Tools: a Minecraft Bedrock Add-On
 
-**Current version: 1.4.0** · Requires Minecraft Bedrock **1.26.40 or newer** · No experiments needed
+**Current version: 1.4.1** · Requires Minecraft Bedrock **1.26.40 or newer** · No experiments needed
 
 Helper Tools gives every player a **Helper Device**, a glowing magic wand. Use it and a colourful menu opens with one-tap helpers: change the time or weather, heal up, escape from a cave, gain superpowers, summon tame pets, teleport to friends or biomes, and build anything from a simple hole to a whole furnished village, a glowing beacon, a sphere or a swimming pool. Builder tools show a glowing 3D preview in the world before anything changes, and the last build can be undone.
 
@@ -75,7 +75,7 @@ Every teleport loads the destination first and puts you on solid ground with hea
 
 ### ✨ Enchant & Armour
 - ✨ **Enchant Item in Hand**: hold any enchantable item, pick from the enchantments it can take and a level up to the normal maximum, or add every compatible enchantment at its top level in one go.
-- 🛡️ **Full Armour Set**: leather, chainmail, iron, gold, diamond or netherite, optionally enchanted (Protection IV, Unbreaking III, Mending, Respiration, Aqua Affinity, Thorns, Swift Sneak, Feather Falling IV, Depth Strider) and put on straight away.
+- 🛡️ **Full Armour Set**: leather, chainmail, iron, gold, diamond or netherite, optionally enchanted (Protection IV, Unbreaking III, Mending, Respiration, Aqua Affinity, Thorns, Swift Sneak, Feather Falling IV, Depth Strider) and equipped into empty armour slots. Existing armour and Elytra stay equipped; the remaining pieces go into your inventory, or drop at your feet if it is full.
 - ⚒️ **Enchanted Tool Kit**: sword, pickaxe, axe, shovel and bow in your chosen material, optionally enchanted (Sharpness V, Looting III, Efficiency V, Fortune III, Silk Touch, Power V, Infinity, Unbreaking III, Mending).
 - 🎨 **Armour Trim Kit**: choose one of the 18 trim patterns and a trim material (iron, copper, gold, lapis, emerald, diamond, netherite, redstone, amethyst, quartz or resin). Minecraft gives add-ons no way to apply a trim directly, so the device hands you the smithing templates, the material and a smithing table: put a template, an armour piece and the material in the table's three slots to apply it.
 
