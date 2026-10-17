@@ -726,7 +726,11 @@ function openBuilderToolsMenu(player) {
     .button("🚜 Flatten / Level Ground\n§7Level land for building with preview", "textures/items/iron_hoe")
     .button("🪜 Instant Underfoot Platform\n§7Create a platform right under your feet", "textures/blocks/ladder")
     .button("🏠 Starter Base Templates\n§7Houses, fort, tree house, and bunker", "textures/items/bed_red")
+    .button("🏡 House Designs\n§7Cottage, cabin, villa, tower and more in 7 styles", "textures/items/door_wood")
     .button("🏘️ Build a Modern Village\n§7Furnished houses, apartments, cafe, farms, well", "textures/blocks/concrete_white")
+    .button("🔷 Shapes & Beacons\n§7Spheres, domes, pyramids, towers, cones, beacons", "textures/items/diamond")
+    .button("🏊 Swimming Pool\n§7Tiled pool with deck, lights and diving board", "textures/items/bucket_water")
+    .button("🌊 Drain Water & Lava\n§7Remove liquids around you (undoable)", "textures/items/bucket_empty")
     .button("🌉 Bridge & Stair Builder\n§7Build safe paths in the direction you face", "textures/blocks/planks_oak")
     .button("💡 Light Up Area\n§7Place torches on dark surfaces around you", "textures/blocks/torch_on")
     .button("🧹 Area Cleanup\n§7Remove selected clutter around you", "textures/items/bucket_empty")
@@ -752,21 +756,33 @@ function openBuilderToolsMenu(player) {
         openBaseBuilderMenu(player);
         break;
       case 5:
-        openVillageBuilderMenu(player);
+        openHouseDesignsMenu(player);
         break;
       case 6:
-        openBridgeAndStairMenu(player);
+        openVillageBuilderMenu(player);
         break;
       case 7:
-        lightUpArea(player);
+        openShapeBuilderMenu(player);
         break;
       case 8:
-        openAreaCleanupMenu(player);
+        openPoolBuilderMenu(player);
         break;
       case 9:
-        executeUndo(player);
+        openDrainLiquidMenu(player);
         break;
       case 10:
+        openBridgeAndStairMenu(player);
+        break;
+      case 11:
+        lightUpArea(player);
+        break;
+      case 12:
+        openAreaCleanupMenu(player);
+        break;
+      case 13:
+        executeUndo(player);
+        break;
+      case 14:
         openMainMenu(player);
         break;
     }
@@ -1078,6 +1094,51 @@ function pushShellCommands(commands, context, x1, y1, z1, x2, y2, z2, blockId) {
   commands.push(fillLocal(context, x1, y1, z2, x2, y2, z2, blockId));
 }
 
+/** Two-block door at local (x, y, z) whose walk-through direction is local (dx, dz). */
+function pushDoorCommands(commands, context, x, y, z, dx, dz, doorId) {
+  const code = DOOR_DIRECTION_CODES[worldDirectionKey(context, dx, dz)];
+  commands.push(setLocal(context, x, y, z, withBlockStates(doorId, { direction: code, door_hinge_bit: false, open_bit: false, upper_block_bit: false })));
+  commands.push(setLocal(context, x, y + 1, z, withBlockStates(doorId, { direction: code, door_hinge_bit: false, open_bit: false, upper_block_bit: true })));
+}
+
+/** Smallest box that contains every block touched by the given fill/setblock commands. */
+function boundsFromCommands(commands) {
+  let bounds = null;
+  for (const command of commands) {
+    const c = parseBlockCommand(command);
+    if (!c) throw new Error(`Cannot measure command: ${command}`);
+    if (!bounds) bounds = { x1: c.x1, y1: c.y1, z1: c.z1, x2: c.x2, y2: c.y2, z2: c.z2 };
+    else {
+      bounds.x1 = Math.min(bounds.x1, c.x1); bounds.y1 = Math.min(bounds.y1, c.y1); bounds.z1 = Math.min(bounds.z1, c.z1);
+      bounds.x2 = Math.max(bounds.x2, c.x2); bounds.y2 = Math.max(bounds.y2, c.y2); bounds.z2 = Math.max(bounds.z2, c.z2);
+    }
+  }
+  return bounds;
+}
+
+/** Splits a world-coordinate fill into horizontal layers so no command exceeds the fill limit. */
+function pushLargeWorldFill(commands, bounds, blockId, mode = "") {
+  const area = (bounds.x2 - bounds.x1 + 1) * (bounds.z2 - bounds.z1 + 1);
+  const layersPerCommand = Math.max(1, Math.floor(FILL_COMMAND_LIMIT / area));
+  for (let y = bounds.y1; y <= bounds.y2; y += layersPerCommand) {
+    const top = Math.min(y + layersPerCommand - 1, bounds.y2);
+    commands.push(`fill ${bounds.x1} ${y} ${bounds.z1} ${bounds.x2} ${top} ${bounds.z2} ${blockId}${mode ? ` ${mode}` : ""}`);
+  }
+}
+
+/**
+ * Block chosen from the shared block list, or a typed block ID (with the
+ * minecraft: namespace added when missing). Returns null when invalid.
+ */
+function resolveBlockChoice(listIndex, customText) {
+  let blockId = (BLOCK_OPTIONS[listIndex] || BLOCK_OPTIONS[0]).id;
+  if (customText && String(customText).trim().length > 0) {
+    blockId = String(customText).trim().toLowerCase();
+    if (!blockId.includes(":")) blockId = "minecraft:" + blockId;
+  }
+  return isValidBlockId(blockId) ? blockId : null;
+}
+
 // Block tokens may carry Bedrock block states, e.g. `minecraft:bed ["direction"=2]`.
 const BLOCK_STATES_PATTERN = /^\[("[a-z0-9_:]+"=("[a-z0-9_]+"|-?\d+|true|false))(,"[a-z0-9_:]+"=("[a-z0-9_]+"|-?\d+|true|false))*\]$/;
 
@@ -1114,8 +1175,18 @@ function parseBlockCommand(command) {
   }
   const mode = index < parts.length ? parts[index++] : "replace";
   if (!["replace", "hollow", "outline", "keep"].includes(mode)) return null;
+  // `fill ... <block> replace <filterBlock> [states]` only touches blocks matching the filter.
+  let filterId = null, filterStates = null;
+  if (isFill && mode === "replace" && index < parts.length) {
+    filterId = parts[index++];
+    if (!isValidBlockId(filterId)) return null;
+    if (index < parts.length && parts[index].startsWith("[")) {
+      filterStates = parseBlockStates(parts[index++]);
+      if (!filterStates) return null;
+    }
+  }
   if (index !== parts.length) return null;
-  return { isFill, x1, y1, z1, x2, y2, z2, blockId, states, mode };
+  return { isFill, x1, y1, z1, x2, y2, z2, blockId, states, mode, filterId, filterStates };
 }
 
 function blockMatches(block, blockId, states) {
@@ -1132,11 +1203,16 @@ function blockMatches(block, blockId, states) {
 function blockCommandIsSatisfied(dimension, command) {
   const parsed = parseBlockCommand(command);
   if (!parsed) return false;
-  const { x1, y1, z1, x2, y2, z2, blockId, states, mode } = parsed;
+  const { x1, y1, z1, x2, y2, z2, blockId, states, mode, filterId, filterStates } = parsed;
   try {
     for (let x = x1; x <= x2; x++) for (let y = y1; y <= y2; y++) for (let z = z1; z <= z2; z++) {
       const block = dimension.getBlock({ x, y, z });
       if (!block) return false;
+      if (filterId) {
+        // A filtered replace is satisfied once nothing matching the filter remains.
+        if (blockMatches(block, filterId, filterStates)) return false;
+        continue;
+      }
       if (mode === "keep") {
         // `keep` only fills air, so the command is satisfied once no air remains.
         if (block.isAir || block.typeId === "minecraft:air") return false;
@@ -1167,11 +1243,18 @@ async function runBlockCommand(dimension, command) {
  * next game tick after every batch so that large plans (such as a whole
  * village) are spread over several ticks instead of stalling one.
  */
-async function runBuildCommands(dimension, commands, batchSize = 0) {
+async function runBuildCommands(dimension, commands, batchSize = 0, tolerateFailures = false) {
+  let failures = 0;
   for (let i = 0; i < commands.length; i++) {
     if (batchSize > 0 && i > 0 && i % batchSize === 0) await nextTick();
-    await runBlockCommand(dimension, commands[i]);
+    if (tolerateFailures) {
+      // Filtered fills fail when nothing matched; that is the expected outcome for most boxes.
+      try { await runCommand(dimension, commands[i]); } catch (e) { failures++; }
+    } else {
+      await runBlockCommand(dimension, commands[i]);
+    }
   }
+  return failures;
 }
 
 function executeBuildPlanUnlocked(player, plan, actionType, successMessage, sound = "dig.stone") {
@@ -1182,7 +1265,7 @@ function executeBuildPlanUnlocked(player, plan, actionType, successMessage, soun
   if (!validateBuildBounds(player, plan.bounds)) return;
   player.sendMessage(`§e🏗️ Building ${plan.name}...§r`);
   return captureUndoSnapshot(player, plan.bounds, actionType).then(async (record) => {
-    await runBuildCommands(getDimensionById(record.dimensionId), plan.commands, plan.batchSize || 0);
+    await runBuildCommands(getDimensionById(record.dimensionId), plan.commands, plan.batchSize || 0, Boolean(plan.tolerateFailures));
   }).then(() => {
     player.sendMessage(`§a${successMessage}§r`);
     player.playSound(sound, { volume: 1.0, pitch: 1.1 });
@@ -1240,6 +1323,11 @@ function executeDigHoleUnlocked(player, bounds, width, depth, length, hollow) {
   });
 }
 
+const FILL_DIRECTIONS = [
+  { name: "⬆️ Up from my feet (above ground)", key: "up", description: "upwards from your feet" },
+  { name: "⬇️ Down into the ground (below my feet)", key: "down", description: "downwards from below your feet" }
+];
+
 function openFillBlocksMenu(player) {
   const blockNames = BLOCK_OPTIONS.map((b) => b.name);
   const fillStyles = ["Solid (Filled)", "Hollow (Room with empty inside)", "Outline (Frame only)"];
@@ -1251,35 +1339,31 @@ function openFillBlocksMenu(player) {
     .slider("Width (Blocks Wide):", 1, 25, { valueStep: 1, defaultValue: 3 })
     .slider("Height (Blocks High):", 1, 25, { valueStep: 1, defaultValue: 3 })
     .slider("Length (Blocks Forward):", 1, 25, { valueStep: 1, defaultValue: 5 })
+    .dropdown("Build Direction:", FILL_DIRECTIONS.map((d) => d.name), { defaultValueIndex: 0 })
     .dropdown("Structure Style:", fillStyles, { defaultValueIndex: 0 })
     .toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
 
   form.show(player).then((response) => {
     if (response.canceled) return;
-    const [blockIndex, customBlock, width, height, length, styleIndex, showGuide] = response.formValues;
+    const [blockIndex, customBlock, width, height, length, directionIndex, styleIndex, showGuide] = response.formValues;
 
-    let selectedBlock = BLOCK_OPTIONS[blockIndex].id;
-    if (customBlock && customBlock.trim().length > 0) {
-      let cb = customBlock.trim();
-      if (!cb.includes(":")) cb = "minecraft:" + cb;
-      selectedBlock = cb;
-    }
-
-    if (!isValidBlockId(selectedBlock)) {
+    const selectedBlock = resolveBlockChoice(blockIndex, customBlock);
+    if (!selectedBlock) {
       player.sendMessage("§cInvalid block ID. Use a value such as minecraft:quartz_block.§r");
       return;
     }
 
     const w = Math.round(width), h = Math.round(height), l = Math.round(length);
     const style = styleIndex === 1 ? "hollow" : (styleIndex === 2 ? "outline" : "replace");
-    const bounds = calculateBounds(player, w, l, h, "up");
+    const direction = FILL_DIRECTIONS[directionIndex] || FILL_DIRECTIONS[0];
+    const bounds = calculateBounds(player, w, l, h, direction.key);
 
     if (showGuide) {
       startPreview(
         player,
         bounds,
         "minecraft:villager_happy",
-        `Do you want to build a ${w}x${h}x${l} structure with ${selectedBlock}?`,
+        `Do you want to build a ${w}x${h}x${l} structure with ${selectedBlock}, ${direction.description}?`,
         () => executeFillBlocks(player, bounds, selectedBlock, w, h, l, style)
       );
     } else {
@@ -1446,7 +1530,8 @@ function openBaseBuilderMenu(player) {
   }).catch((e) => console.error("Base builder menu error: " + e));
 }
 
-function createBaseTemplatePlan(player, templateKey) {
+function createBaseTemplatePlan(player, templateKey, paletteIndex = 0) {
+  if (HOUSE_DESIGNS.some((design) => design.key === templateKey)) return createHouseDesignPlan(player, templateKey, paletteIndex);
   if (templateKey === "simple_house") return createSimpleHousePlan(player);
   if (templateKey === "large_house") return createLargeHousePlan(player);
   if (templateKey === "fort") return createFortPlan(player);
@@ -1469,6 +1554,7 @@ function createSimpleHousePlan(player) {
   q.push(fillLocal(c, 8, 1, 0, 8, 4, 8, "minecraft:oak_planks"));
   q.push(fillLocal(c, 1, 1, 1, 7, 4, 7, "minecraft:air"));
   q.push(fillLocal(c, 4, 1, 0, 4, 2, 0, "minecraft:air"));
+  pushDoorCommands(q, c, 4, 1, 0, 0, 1, "minecraft:wooden_door");
   q.push(setLocal(c, 2, 2, 0, "minecraft:glass"), setLocal(c, 6, 2, 0, "minecraft:glass"));
   q.push(fillLocal(c, 2, 2, 8, 6, 2, 8, "minecraft:glass"));
   q.push(fillLocal(c, 0, 2, 3, 0, 2, 5, "minecraft:glass"));
@@ -1495,6 +1581,7 @@ function createLargeHousePlan(player) {
   q.push(fillLocal(c, 1, 4, 1, 13, 4, 9, "minecraft:oak_planks"));
   q.push(fillLocal(c, 1, 4, 2, 3, 4, 6, "minecraft:air"));
   q.push(fillLocal(c, 7, 1, 0, 7, 2, 0, "minecraft:air"));
+  pushDoorCommands(q, c, 7, 1, 0, 0, 1, "minecraft:spruce_door");
   for (const y of [2, 6]) {
     q.push(fillLocal(c, 3, y, 0, 5, y, 0, "minecraft:glass"));
     q.push(fillLocal(c, 9, y, 0, 11, y, 0, "minecraft:glass"));
@@ -1551,6 +1638,7 @@ function createTreeHousePlan(player) {
   q.push(fillLocal(c, 9, 8, 6, 9, 11, 13, "minecraft:oak_planks"));
   q.push(fillLocal(c, 2, 8, 7, 8, 11, 12, "minecraft:air"));
   q.push(fillLocal(c, 5, 8, 6, 5, 9, 6, "minecraft:air"));
+  pushDoorCommands(q, c, 5, 8, 6, 0, 1, "minecraft:wooden_door");
   q.push(fillLocal(c, 1, 9, 8, 1, 9, 11, "minecraft:glass"), fillLocal(c, 9, 9, 8, 9, 9, 11, "minecraft:glass"));
   q.push(fillLocal(c, 4, 9, 13, 6, 9, 13, "minecraft:glass"));
   q.push(fillLocal(c, 0, 12, 5, 10, 12, 14, "minecraft:dark_oak_planks"));
@@ -1607,7 +1695,7 @@ const VILLAGE_PALETTES = [
     wall: "minecraft:white_concrete", accent: "minecraft:light_gray_concrete",
     trim: "minecraft:stripped_dark_oak_log", plank: "minecraft:dark_oak_planks",
     floor: "minecraft:smooth_quartz", upperFloor: "minecraft:dark_oak_planks",
-    roof: "minecraft:gray_concrete", slab: "minecraft:smooth_stone_slab",
+    roof: "minecraft:gray_concrete", roofStairs: "minecraft:dark_oak_stairs", slab: "minecraft:smooth_stone_slab",
     door: "minecraft:dark_oak_door", fence: "minecraft:dark_oak_fence", gate: "minecraft:dark_oak_fence_gate",
     sofa: "minecraft:quartz_stairs", chair: "minecraft:dark_oak_stairs", carpet: "minecraft:light_gray_carpet",
     counter: "minecraft:quartz_block", table: "minecraft:dark_oak_slab"
@@ -1617,7 +1705,7 @@ const VILLAGE_PALETTES = [
     wall: "minecraft:gray_concrete", accent: "minecraft:black_concrete",
     trim: "minecraft:stripped_oak_log", plank: "minecraft:oak_planks",
     floor: "minecraft:smooth_stone", upperFloor: "minecraft:oak_planks",
-    roof: "minecraft:black_concrete", slab: "minecraft:smooth_stone_slab",
+    roof: "minecraft:black_concrete", roofStairs: "minecraft:deepslate_tile_stairs", slab: "minecraft:smooth_stone_slab",
     door: "minecraft:dark_oak_door", fence: "minecraft:oak_fence", gate: "minecraft:dark_oak_fence_gate",
     sofa: "minecraft:quartz_stairs", chair: "minecraft:oak_stairs", carpet: "minecraft:white_carpet",
     counter: "minecraft:quartz_block", table: "minecraft:oak_slab"
@@ -1627,7 +1715,7 @@ const VILLAGE_PALETTES = [
     wall: "minecraft:sandstone", accent: "minecraft:white_concrete",
     trim: "minecraft:stripped_spruce_log", plank: "minecraft:spruce_planks",
     floor: "minecraft:smooth_stone", upperFloor: "minecraft:spruce_planks",
-    roof: "minecraft:light_gray_concrete", slab: "minecraft:smooth_stone_slab",
+    roof: "minecraft:light_gray_concrete", roofStairs: "minecraft:spruce_stairs", slab: "minecraft:smooth_stone_slab",
     door: "minecraft:dark_oak_door", fence: "minecraft:spruce_fence", gate: "minecraft:dark_oak_fence_gate",
     sofa: "minecraft:quartz_stairs", chair: "minecraft:spruce_stairs", carpet: "minecraft:white_carpet",
     counter: "minecraft:quartz_block", table: "minecraft:spruce_slab"
@@ -1648,6 +1736,8 @@ const VILLAGE_SHARED_BLOCKS = {
 const STAIR_DIRECTION_CODES = { "1,0": 0, "-1,0": 1, "0,1": 2, "0,-1": 3 };
 const BED_DIRECTION_CODES = { "0,1": 0, "-1,0": 1, "0,-1": 2, "1,0": 3 };
 const DOOR_DIRECTION_CODES = { "1,0": 0, "0,1": 1, "-1,0": 2, "0,-1": 3 };
+// `facing_direction` of a ladder is the way it faces, away from the wall it hangs on.
+const LADDER_DIRECTION_CODES = { "0,-1": 2, "0,1": 3, "-1,0": 4, "1,0": 5 };
 const CARDINAL_DIRECTION_NAMES = { "1,0": "east", "-1,0": "west", "0,1": "south", "0,-1": "north" };
 
 function withBlockStates(blockId, states) {
@@ -1727,9 +1817,17 @@ class VillageBuilder {
   }
   /** Door whose walk-through direction is (dx, dz). */
   door(x, y, z, dx, dz) {
-    const code = DOOR_DIRECTION_CODES[worldDirectionKey(this.c, dx, dz)];
-    this.set(x, y, z, withBlockStates(this.p.door, { direction: code, door_hinge_bit: false, open_bit: false, upper_block_bit: false }));
-    this.set(x, y + 1, z, withBlockStates(this.p.door, { direction: code, door_hinge_bit: false, open_bit: false, upper_block_bit: true }));
+    pushDoorCommands(this.q, this.c, x, y, z, dx, dz, this.p.door);
+  }
+  /** Row of stair blocks from (x1, z1) to (x2, z2) at height y whose tall side faces local (dx, dz). */
+  stairs(x1, y, z1, x2, z2, dx, dz, blockId = this.p.roofStairs) {
+    const code = STAIR_DIRECTION_CODES[worldDirectionKey(this.c, dx, dz)];
+    this.fill(x1, y, z1, x2, y, z2, withBlockStates(blockId, { weirdo_direction: code, upside_down_bit: false }));
+  }
+  /** Ladder from y1 up to y2 at (x, z), facing local (dx, dz) away from the wall it hangs on. */
+  ladder(x, y1, z, y2, dx, dz) {
+    const code = LADDER_DIRECTION_CODES[worldDirectionKey(this.c, dx, dz)];
+    this.fill(x, y1, z, x, y2, z, withBlockStates("minecraft:ladder", { facing_direction: code }));
   }
   /** Container or furnace whose front faces local direction (dx, dz). */
   facing(x, y, z, blockId, dx, dz) {
@@ -2201,6 +2299,777 @@ function openVillageBuilderMenu(player) {
     if (showGuide) startPreview(player, plan.bounds, "minecraft:villager_happy", prompt, confirm);
     else confirm();
   }).catch((e) => console.error("Village builder menu error: " + e));
+}
+
+// ==========================================
+// 🏡 HOUSE DESIGNS (WITH DOORS)
+// ==========================================
+
+// Every house design can be built in any of these styles. The first three are
+// the village colour schemes; the rest are rustic and themed material sets.
+const HOUSE_PALETTES = [
+  ...VILLAGE_PALETTES,
+  {
+    name: "Rustic Oak & Cobblestone 🪵",
+    wall: "minecraft:cobblestone", accent: "minecraft:stone_bricks",
+    trim: "minecraft:oak_log", plank: "minecraft:oak_planks",
+    floor: "minecraft:oak_planks", upperFloor: "minecraft:oak_planks",
+    roof: "minecraft:dark_oak_planks", roofStairs: "minecraft:dark_oak_stairs", slab: "minecraft:dark_oak_slab",
+    door: "minecraft:wooden_door", fence: "minecraft:oak_fence", gate: "minecraft:fence_gate",
+    sofa: "minecraft:dark_oak_stairs", chair: "minecraft:oak_stairs", carpet: "minecraft:red_carpet",
+    counter: "minecraft:smooth_stone", table: "minecraft:oak_slab"
+  },
+  {
+    name: "Spruce Lodge 🌲",
+    wall: "minecraft:spruce_planks", accent: "minecraft:stone_bricks",
+    trim: "minecraft:stripped_spruce_log", plank: "minecraft:spruce_planks",
+    floor: "minecraft:spruce_planks", upperFloor: "minecraft:spruce_planks",
+    roof: "minecraft:stone_bricks", roofStairs: "minecraft:stone_brick_stairs", slab: "minecraft:stone_brick_slab",
+    door: "minecraft:spruce_door", fence: "minecraft:spruce_fence", gate: "minecraft:spruce_fence_gate",
+    sofa: "minecraft:spruce_stairs", chair: "minecraft:spruce_stairs", carpet: "minecraft:green_carpet",
+    counter: "minecraft:smooth_stone", table: "minecraft:spruce_slab"
+  },
+  {
+    name: "Desert Sandstone 🏜️",
+    wall: "minecraft:sandstone", accent: "minecraft:smooth_sandstone",
+    trim: "minecraft:stripped_acacia_log", plank: "minecraft:acacia_planks",
+    floor: "minecraft:cut_sandstone", upperFloor: "minecraft:acacia_planks",
+    roof: "minecraft:smooth_sandstone", roofStairs: "minecraft:sandstone_stairs", slab: "minecraft:sandstone_slab",
+    door: "minecraft:acacia_door", fence: "minecraft:acacia_fence", gate: "minecraft:acacia_fence_gate",
+    sofa: "minecraft:acacia_stairs", chair: "minecraft:acacia_stairs", carpet: "minecraft:orange_carpet",
+    counter: "minecraft:cut_sandstone", table: "minecraft:acacia_slab"
+  },
+  {
+    name: "Cherry Blossom 🌸",
+    wall: "minecraft:cherry_planks", accent: "minecraft:white_concrete",
+    trim: "minecraft:stripped_cherry_log", plank: "minecraft:cherry_planks",
+    floor: "minecraft:cherry_planks", upperFloor: "minecraft:cherry_planks",
+    roof: "minecraft:pink_terracotta", roofStairs: "minecraft:cherry_stairs", slab: "minecraft:cherry_slab",
+    door: "minecraft:cherry_door", fence: "minecraft:cherry_fence", gate: "minecraft:cherry_fence_gate",
+    sofa: "minecraft:quartz_stairs", chair: "minecraft:cherry_stairs", carpet: "minecraft:pink_carpet",
+    counter: "minecraft:quartz_block", table: "minecraft:cherry_slab"
+  }
+];
+
+// Designs are drawn like village lots: x runs across the frontage, z runs
+// from the front (z = 0, one block ahead of the player) into the plot and
+// y = 0 is ground level (the block under the player's feet).
+
+/** Cottage with a pitched stair roof, chimney and a furnished single room. */
+function drawCottage(v) {
+  const { p, b } = v;
+  v.set(5, 0, 0, b.path);
+  v.lampPost(2, 0);
+  v.lampPost(8, 0);
+  v.room(1, 1, 9, 9, 0, 3, p.wall, p.floor);
+  for (const [x, z] of [[1, 1], [9, 1], [1, 9], [9, 9]]) v.fill(x, 1, z, x, 3, z, p.trim);
+  v.fill(2, 3, 1, 8, 3, 1, p.plank);
+  v.fill(2, 2, 1, 3, 2, 1, b.glass);
+  v.fill(7, 2, 1, 8, 2, 1, b.glass);
+  for (const x of [1, 9]) {
+    v.fill(x, 2, 3, x, 2, 4, b.glass);
+    v.fill(x, 2, 6, x, 2, 7, b.glass);
+  }
+  v.fill(3, 2, 9, 4, 2, 9, b.glass);
+  v.fill(6, 2, 9, 7, 2, 9, b.glass);
+  v.door(5, 1, 1, 0, 1);
+  v.fill(1, 4, 1, 9, 4, 9, p.plank);
+  // Roof: each level steps one block in towards the ridge above x = 5.
+  for (let i = 0; i <= 4; i++) {
+    const y = 4 + i;
+    v.stairs(i, y, 0, i, 10, 1, 0);
+    v.stairs(10 - i, y, 0, 10 - i, 10, -1, 0);
+    if (i >= 1 && i <= 3) {
+      v.fill(i + 1, y, 1, 9 - i, y, 1, p.plank);
+      v.fill(i + 1, y, 9, 9 - i, y, 9, p.plank);
+      v.fill(i + 1, y, 2, 9 - i, y, 8, b.air);
+    }
+  }
+  v.fill(5, 8, 0, 5, 8, 10, p.roof);
+  v.fill(4, 6, 1, 6, 6, 1, b.glass);
+  v.fill(8, 4, 8, 8, 9, 8, p.accent);
+  v.set(8, 10, 8, "minecraft:campfire");
+  // Furniture.
+  v.bed(2, 1, 7, 0, 1);
+  v.facing(3, 1, 8, "minecraft:chest", 0, -1);
+  v.kitchenRow(6, 8, 1, 0, -1, ["furnace", "crafting_table", "barrel"]);
+  v.fill(3, 1, 3, 7, 1, 4, p.carpet);
+  v.table(5, 1, 5);
+  v.seat(4, 1, 5, 1, 0);
+  v.seat(6, 1, 5, -1, 0);
+  v.fill(8, 1, 3, 8, 2, 3, "minecraft:bookshelf");
+  v.set(5, 3, 5, b.hangingLantern);
+}
+
+/** Steep A-frame cabin whose roof reaches the ground, with a glass front gable. */
+function drawAFrameCabin(v) {
+  const { p, b } = v;
+  v.fill(3, 0, 0, 5, 0, 0, b.path);
+  v.lampPost(1, 0);
+  v.lampPost(7, 0);
+  v.fill(0, 0, 1, 8, 0, 9, p.floor);
+  // Roof: two levels per step so the inside is tall enough to stand in.
+  for (let i = 0; i <= 3; i++) {
+    const y = 1 + i * 2;
+    v.stairs(i, y, 0, i, 10, 1, 0);
+    v.fill(i, y + 1, 0, i, y + 1, 10, p.roof);
+    v.stairs(8 - i, y, 0, 8 - i, 10, -1, 0);
+    v.fill(8 - i, y + 1, 0, 8 - i, y + 1, 10, p.roof);
+    v.fill(i + 1, y, 1, 7 - i, y + 1, 1, p.plank);
+    v.fill(i + 1, y, 9, 7 - i, y + 1, 9, p.plank);
+    v.fill(i + 1, y, 2, 7 - i, y + 1, 8, b.air);
+  }
+  v.fill(4, 9, 0, 4, 9, 10, p.roof);
+  v.fill(2, 3, 1, 6, 4, 1, b.glass);
+  v.fill(3, 5, 1, 5, 6, 1, b.glass);
+  v.set(2, 2, 1, b.glass);
+  v.set(6, 2, 1, b.glass);
+  v.fill(3, 5, 9, 5, 6, 9, b.glass);
+  v.door(4, 1, 1, 0, 1);
+  // Furniture.
+  v.bed(1, 1, 7, 0, 1);
+  v.facing(2, 1, 8, "minecraft:chest", 0, -1);
+  v.kitchenRow(5, 8, 1, 0, -1, ["furnace", "crafting_table", "barrel"]);
+  for (let z = 3; z <= 4; z++) v.seat(2, 1, z, 1, 0, p.sofa);
+  v.fill(3, 1, 3, 5, 1, 5, p.carpet);
+  v.set(4, 1, 4, p.table);
+  v.fill(6, 1, 3, 6, 2, 3, "minecraft:bookshelf");
+  v.set(4, 8, 4, b.hangingLantern);
+  v.set(4, 8, 7, b.hangingLantern);
+}
+
+/** Two-storey modern villa with a roof terrace, internal stairs and a driveway. */
+function drawModernVilla(v) {
+  const { p, b } = v;
+  v.fill(5, 0, 0, 7, 0, 1, b.path);
+  v.fill(9, 0, 0, 12, 0, 1, b.road);
+  v.fill(0, 1, 0, 3, 1, 0, b.leaves);
+  v.room(0, 2, 12, 12, 0, 4, p.wall, p.floor);
+  v.room(0, 2, 7, 12, 5, 4, p.accent, p.upperFloor);
+  v.fill(8, 5, 2, 12, 5, 12, p.upperFloor);
+  v.fill(8, 6, 2, 12, 6, 2, p.fence);
+  v.fill(12, 6, 2, 12, 6, 12, p.fence);
+  v.fill(8, 6, 12, 12, 6, 12, p.fence);
+  // Ground-floor windows and door.
+  v.fill(1, 2, 2, 4, 3, 2, b.glass);
+  v.fill(8, 2, 2, 11, 3, 2, b.glass);
+  for (const x of [0, 12]) {
+    v.fill(x, 2, 4, x, 3, 6, b.glass);
+    v.fill(x, 2, 8, x, 3, 10, b.glass);
+  }
+  v.fill(2, 2, 12, 5, 3, 12, b.glass);
+  v.fill(7, 2, 12, 10, 3, 12, b.glass);
+  v.door(6, 1, 2, 0, 1);
+  // Upper-floor windows and the door onto the terrace.
+  v.fill(1, 7, 2, 6, 8, 2, b.glass);
+  v.fill(0, 7, 4, 0, 8, 6, b.glass);
+  v.fill(0, 7, 8, 0, 8, 10, b.glass);
+  v.fill(1, 7, 12, 6, 8, 12, b.glass);
+  v.fill(7, 7, 4, 7, 8, 6, b.glass);
+  v.door(7, 6, 8, 1, 0);
+  // Stairs up the left side with an open stairwell.
+  for (let step = 0; step < 4; step++) {
+    v.fill(1, 1 + step, 4 + step, 2, 1 + step, 4 + step, p.plank);
+    v.fill(1, 2 + step, 4 + step, 2, 3 + step, 4 + step, b.air);
+  }
+  v.fill(1, 5, 4, 2, 5, 7, b.air);
+  v.fill(3, 6, 4, 3, 6, 7, p.fence);
+  // Ground floor: lounge, kitchen and dining.
+  v.fill(7, 1, 4, 7, 4, 6, p.plank);
+  v.fill(7, 2, 4, 7, 2, 5, b.tv);
+  v.fill(8, 1, 4, 11, 1, 6, p.carpet);
+  for (let z = 4; z <= 5; z++) v.seat(11, 1, z, -1, 0, p.sofa);
+  v.set(9, 1, 5, p.table);
+  v.kitchenRow(1, 11, 1, 0, -1, ["barrel", "furnace", "counter", "smoker", "counter", "crafting_table"]);
+  v.table(9, 1, 9);
+  v.seat(8, 1, 9, 1, 0);
+  v.seat(10, 1, 9, -1, 0);
+  v.fill(11, 1, 11, 11, 2, 11, "minecraft:bookshelf");
+  v.set(6, 4, 7, b.hangingLantern);
+  v.set(4, 5, 9, b.light);
+  v.set(9, 5, 5, b.light);
+  // Upper floor: two bedrooms and a bathroom corner.
+  v.bed(1, 6, 10, 0, 1);
+  v.facing(3, 6, 11, "minecraft:chest", 0, -1);
+  v.fill(1, 6, 8, 3, 6, 9, p.carpet);
+  v.bed(5, 6, 10, 0, 1);
+  v.facing(6, 6, 11, "minecraft:chest", 0, -1);
+  v.set(6, 6, 4, "minecraft:cauldron");
+  v.set(5, 6, 4, p.counter);
+  v.fill(4, 6, 4, 4, 7, 4, "minecraft:bookshelf");
+  v.set(3, 9, 7, b.hangingLantern);
+  // Terrace seating.
+  v.table(10, 6, 9);
+  v.seat(9, 6, 9, 1, 0);
+  v.seat(11, 6, 9, -1, 0);
+  v.flatRoof(0, 2, 7, 12, 10);
+}
+
+/** Square stone watchtower with three floors joined by a ladder and a battlement deck. */
+function drawWatchtower(v) {
+  const { p, b } = v;
+  v.set(3, 0, 0, b.path);
+  v.room(0, 1, 6, 7, 0, 12, p.accent, p.floor);
+  for (const [x, z] of [[0, 1], [6, 1], [0, 7], [6, 7]]) v.fill(x, 1, z, x, 12, z, p.trim);
+  for (const y of [4, 8, 12]) v.fill(1, y, 2, 5, y, 6, p.upperFloor);
+  v.ladder(3, 1, 6, 12, 0, -1);
+  v.door(3, 1, 1, 0, 1);
+  for (const y of [6, 10]) {
+    v.set(1, y, 1, b.pane);
+    v.set(5, y, 1, b.pane);
+    v.set(0, y, 4, b.pane);
+    v.set(6, y, 4, b.pane);
+  }
+  // Battlements around the top deck.
+  for (let x = 0; x <= 6; x++) for (const z of [1, 7]) if ((x + z) % 2 === 0) v.set(x, 13, z, p.accent);
+  for (let z = 2; z <= 6; z++) for (const x of [0, 6]) if ((x + z) % 2 === 0) v.set(x, 13, z, p.accent);
+  v.set(3, 13, 4, "minecraft:campfire");
+  v.fill(0, 13, 1, 0, 16, 1, p.fence);
+  v.fill(1, 15, 1, 2, 16, 1, "minecraft:red_wool");
+  // Furniture on each floor.
+  v.facing(1, 1, 6, "minecraft:chest", 0, -1);
+  v.set(5, 1, 6, "minecraft:crafting_table");
+  v.set(5, 1, 2, "minecraft:barrel");
+  v.bed(1, 5, 3, 0, 1);
+  v.facing(5, 5, 6, "minecraft:chest", 0, -1);
+  v.fill(1, 5, 6, 1, 6, 6, "minecraft:bookshelf");
+  v.bed(1, 9, 3, 0, 1);
+  v.set(5, 9, 6, "minecraft:bookshelf");
+  v.set(5, 9, 2, "minecraft:lectern");
+  for (const y of [3, 7, 11]) v.set(3, y, 4, b.hangingLantern);
+}
+
+const HOUSE_DESIGNS = [
+  { key: "cottage", name: "Cosy Cottage 🏡", size: "11×11", description: "Pitched roof, chimney, bed and kitchen", width: 11, draw: drawCottage },
+  { key: "aframe", name: "A-Frame Cabin 🛖", size: "9×11", description: "Steep roof to the ground, glass front, porch lamps", width: 9, draw: drawAFrameCabin },
+  { key: "villa", name: "Modern Villa 🏢", size: "14×14", description: "Two storeys, roof terrace, stairs, driveway", width: 13, draw: drawModernVilla },
+  { key: "watchtower", name: "Stone Watchtower 🗼", size: "7×8", description: "Ladder up three floors to the battlements", width: 7, draw: drawWatchtower },
+  { key: "bungalow", name: "Modern Bungalow 🏠", size: "13×13", description: "Single storey with lounge, kitchen and bedroom", width: 11, draw: drawBungalow },
+  { key: "carport_house", name: "Carport House 🚗", size: "17×13", description: "Modern home with a covered carport", width: 15, draw: drawCarportHouse },
+  { key: "studio_cabin", name: "Studio Cabin 🛋️", size: "9×11", description: "Compact one-room cabin with a reading nook", width: 7, draw: drawStudioCabin },
+  { key: "family_home", name: "Family Home 🏘️", size: "13×14", description: "Two storeys with three bedrooms and a kitchen", width: 11, draw: drawFamilyHome }
+];
+
+function createHouseDesignPlan(player, designKey, paletteIndex = 0) {
+  const design = HOUSE_DESIGNS.find((d) => d.key === designKey);
+  if (!design) return null;
+  const palette = HOUSE_PALETTES[paletteIndex] || HOUSE_PALETTES[0];
+  const c = createOrientedBuildContext(player, design.width, 1, -1);
+  const builder = new VillageBuilder(c, palette, VILLAGE_SHARED_BLOCKS);
+  design.draw(builder);
+  const plan = makePlan(player, design.name.replace(/\s\S+$/, ""), c, builder.q, boundsFromCommands(builder.q));
+  plan.batchSize = VILLAGE_BATCH_SIZE;
+  plan.palette = palette.name;
+  return plan;
+}
+
+function openHouseDesignsMenu(player) {
+  const form = new ActionFormData()
+    .title("🏡 House Designs")
+    .body("Every house has a real door and furniture. Pick a design, then choose its style. It is placed in the direction you are facing:");
+  for (const design of HOUSE_DESIGNS) form.button(`${design.name}\n§7${design.size} • ${design.description}`);
+  form.button("⬅️ Back\n§7Return to Builder Tools");
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    if (response.selection === HOUSE_DESIGNS.length) return openBuilderToolsMenu(player);
+    const design = HOUSE_DESIGNS[response.selection];
+    if (design) openHouseStyleMenu(player, design);
+  }).catch((e) => console.error("House designs menu error: " + e));
+}
+
+function openHouseStyleMenu(player, design) {
+  const form = new ModalFormData()
+    .title(`🏡 ${design.name}`)
+    .dropdown("Style and materials:", HOUSE_PALETTES.map((palette) => palette.name), { defaultValueIndex: 0 })
+    .toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const [paletteIndex, showGuide] = response.formValues;
+    const plan = createHouseDesignPlan(player, design.key, Number(paletteIndex));
+    if (!plan || !validateBuildBounds(player, plan.bounds)) return;
+    const confirm = () => executeBuildPlan(player, plan, `house_${design.key}`, `🏡 ${design.name} completed in the ${plan.palette} style!`, "dig.wood");
+    if (showGuide) {
+      startPreview(player, plan.bounds, "minecraft:villager_happy",
+        `${design.name}\n${design.description}\nStyle: ${plan.palette}\n\nBuild this house here?`, confirm);
+    } else {
+      confirm();
+    }
+  }).catch((e) => console.error("House style menu error: " + e));
+}
+
+// ==========================================
+// 🔷 SHAPES & BEACONS
+// ==========================================
+
+const SHAPE_BATCH_SIZE = 60;
+const SHAPE_MAX_RADIUS = 25;
+
+const SHAPE_TYPES = [
+  {
+    key: "sphere", name: "Sphere 🔮", label: "Sphere", description: "Ball resting on the ground",
+    sizes: [{ key: "radius", label: "Radius (blocks):", min: 1, max: SHAPE_MAX_RADIUS, step: 1, defaultValue: 5 }],
+    hollowLabel: "Hollow (empty inside, one-block shell)"
+  },
+  {
+    key: "dome", name: "Dome ⛺", label: "Dome", description: "Half sphere, great as a glass greenhouse",
+    sizes: [{ key: "radius", label: "Radius (blocks):", min: 1, max: SHAPE_MAX_RADIUS, step: 1, defaultValue: 6 }],
+    hollowLabel: "Hollow (open inside, walk in underneath)"
+  },
+  {
+    key: "pyramid", name: "Pyramid 🔺", label: "Pyramid", description: "Stepped pyramid with a pointed top",
+    sizes: [{ key: "base", label: "Base width (blocks):", min: 3, max: 61, step: 2, defaultValue: 11 }],
+    hollowLabel: "Hollow (empty inside)"
+  },
+  {
+    key: "cylinder", name: "Cylinder / Tower 🗼", label: "Cylinder", description: "Round tower; height 1 makes a disc or ring",
+    sizes: [
+      { key: "radius", label: "Radius (blocks):", min: 1, max: SHAPE_MAX_RADIUS, step: 1, defaultValue: 4 },
+      { key: "height", label: "Height (blocks):", min: 1, max: 50, step: 1, defaultValue: 6 }
+    ],
+    hollowLabel: "Hollow (walls only, open top and bottom)"
+  },
+  {
+    key: "cone", name: "Cone 🍦", label: "Cone", description: "Round spire that tapers to a point",
+    sizes: [
+      { key: "radius", label: "Base radius (blocks):", min: 1, max: SHAPE_MAX_RADIUS, step: 1, defaultValue: 5 },
+      { key: "height", label: "Height (blocks):", min: 2, max: 50, step: 1, defaultValue: 8 }
+    ],
+    hollowLabel: "Hollow (open inside)"
+  }
+];
+
+// A shape is a stack of horizontal layers. Each layer is a circle (`r2` is its
+// squared radius, including the half-block rounding margin) or a square
+// (`h` is its half width). `size` orders layers of the same kind.
+function circleLayer(radius) {
+  if (radius < 0) return null;
+  const r2 = (radius + 0.5) * (radius + 0.5);
+  return { r2, size: r2 };
+}
+
+function squareLayer(half) {
+  return half < 0 ? null : { h: half, size: half };
+}
+
+/** The same layer one block smaller all round, or null when nothing is left. */
+function shrinkLayer(layer) {
+  if (!layer) return null;
+  if (layer.h !== undefined) return squareLayer(layer.h - 1);
+  const r = Math.sqrt(layer.r2) - 1;
+  return r < 0 ? null : { r2: r * r, size: r * r };
+}
+
+function smallerLayer(a, b) {
+  if (!a || !b) return null;
+  return a.size <= b.size ? a : b;
+}
+
+/** Half extent along z of the layer's row at offset dx from its centre, or -1 for none. */
+function layerRowExtent(layer, dx) {
+  if (layer.h !== undefined) return Math.abs(dx) <= layer.h ? layer.h : -1;
+  const s = layer.r2 - dx * dx;
+  return s < 0 ? -1 : Math.floor(Math.sqrt(s));
+}
+
+/**
+ * Layer stack for a shape: `outer[y]` is the solid cross-section at local
+ * height y, `half` the horizontal half size, and the open flags say which
+ * ends stay open when the shape is hollow.
+ */
+function createShapeLayers(shapeKey, params) {
+  const outer = [];
+  let half = 0, openBottom = true, openTop = false;
+  if (shapeKey === "sphere") {
+    const radius = params.radius;
+    half = radius;
+    openBottom = false;
+    for (let y = 0; y <= 2 * radius; y++) {
+      const dy = y - radius;
+      const r2 = (radius + 0.5) * (radius + 0.5) - dy * dy;
+      outer.push(r2 < 0 ? null : { r2, size: r2 });
+    }
+  } else if (shapeKey === "dome") {
+    const radius = params.radius;
+    half = radius;
+    for (let y = 0; y <= radius; y++) {
+      const r2 = (radius + 0.5) * (radius + 0.5) - y * y;
+      outer.push({ r2, size: r2 });
+    }
+  } else if (shapeKey === "pyramid") {
+    const base = Math.min(61, params.base | 1);
+    half = (base - 1) / 2;
+    for (let y = 0; y <= half; y++) outer.push(squareLayer(half - y));
+  } else if (shapeKey === "cylinder") {
+    half = params.radius;
+    openTop = true;
+    for (let y = 0; y < params.height; y++) outer.push(circleLayer(params.radius));
+  } else if (shapeKey === "cone") {
+    const radius = params.radius, height = params.height;
+    half = radius;
+    for (let y = 0; y < height; y++) outer.push(circleLayer(radius * (1 - y / height)));
+  } else {
+    throw new Error(`Unknown shape ${shapeKey}`);
+  }
+  return { outer, half, openBottom, openTop };
+}
+
+/**
+ * Cross-sections to leave empty for a hollow shape. A block is hollowed only
+ * when it is one block in from its own layer and inside the layers above and
+ * below, so every hollowed block has solid neighbours on all six sides and
+ * the shell never has holes.
+ */
+function shapeInnerLayers(spec) {
+  const OPEN = { size: Infinity };
+  const { outer, openBottom, openTop } = spec;
+  return outer.map((layer, y) => {
+    if (!layer) return null;
+    const below = y === 0 ? (openBottom ? OPEN : null) : outer[y - 1];
+    const above = y === outer.length - 1 ? (openTop ? OPEN : null) : outer[y + 1];
+    return smallerLayer(smallerLayer(shrinkLayer(layer), below), above);
+  });
+}
+
+/** Merges single-row runs into the fewest fill commands (columns first, then slabs). */
+function mergeRunsIntoFills(context, runs, blockId) {
+  runs.sort((a, b) => a.x - b.x || a.z1 - b.z1 || a.z2 - b.z2 || a.y - b.y);
+  const columns = [];
+  for (const run of runs) {
+    const last = columns[columns.length - 1];
+    if (last && last.x1 === run.x && last.z1 === run.z1 && last.z2 === run.z2 && last.y2 === run.y - 1) last.y2 = run.y;
+    else columns.push({ x1: run.x, x2: run.x, y1: run.y, y2: run.y, z1: run.z1, z2: run.z2 });
+  }
+  columns.sort((a, b) => a.y1 - b.y1 || a.y2 - b.y2 || a.z1 - b.z1 || a.z2 - b.z2 || a.x1 - b.x1);
+  const boxes = [];
+  for (const box of columns) {
+    const last = boxes[boxes.length - 1];
+    if (last && last.y1 === box.y1 && last.y2 === box.y2 && last.z1 === box.z1 && last.z2 === box.z2 && last.x2 === box.x1 - 1) last.x2 = box.x2;
+    else boxes.push(box);
+  }
+  const commands = [];
+  for (const box of boxes) pushLargeFill(commands, context, box.x1, box.y1, box.z1, box.x2, box.y2, box.z2, blockId);
+  return commands;
+}
+
+function createShapeCommands(context, spec, hollow, blockId) {
+  const { outer, half } = spec;
+  const inner = hollow ? shapeInnerLayers(spec) : outer.map(() => null);
+  const runs = [];
+  for (let y = 0; y < outer.length; y++) {
+    const layer = outer[y];
+    if (!layer) continue;
+    for (let x = 0; x <= 2 * half; x++) {
+      const dx = x - half;
+      const extent = layerRowExtent(layer, dx);
+      if (extent < 0) continue;
+      const innerExtent = inner[y] ? layerRowExtent(inner[y], dx) : -1;
+      if (innerExtent < 0) {
+        runs.push({ x, y, z1: half - extent, z2: half + extent });
+      } else if (innerExtent < extent) {
+        runs.push({ x, y, z1: half - extent, z2: half - innerExtent - 1 });
+        runs.push({ x, y, z1: half + innerExtent + 1, z2: half + extent });
+      }
+    }
+  }
+  return mergeRunsIntoFills(context, runs, blockId);
+}
+
+function describeShapeSize(shape, params) {
+  return shape.sizes.map((size) => `${size.label.replace(/[:\s]+$/, "").replace(/ \(blocks\)/, "")} ${params[size.key]}`).join(", ");
+}
+
+function createShapePlan(player, shapeKey, params, blockId, hollow) {
+  const shape = SHAPE_TYPES.find((s) => s.key === shapeKey);
+  if (!shape) return null;
+  const spec = createShapeLayers(shapeKey, params);
+  const size = spec.half * 2 + 1;
+  const c = createOrientedBuildContext(player, size, size, 0);
+  const commands = createShapeCommands(c, spec, hollow, blockId);
+  const plan = makePlan(player, `${hollow ? "Hollow " : ""}${shape.label}`, c, commands,
+    localBounds(c, 0, 0, 0, size - 1, spec.outer.length - 1, size - 1));
+  plan.batchSize = SHAPE_BATCH_SIZE;
+  plan.summary = describeShapeSize(shape, params);
+  plan.blockId = blockId;
+  return plan;
+}
+
+const BEACON_BASE_MATERIALS = [
+  { name: "Iron Blocks ⚔️", id: "minecraft:iron_block" },
+  { name: "Gold Blocks 🪙", id: "minecraft:gold_block" },
+  { name: "Emerald Blocks ❇️", id: "minecraft:emerald_block" },
+  { name: "Diamond Blocks 💎", id: "minecraft:diamond_block" },
+  { name: "Netherite Blocks 👑", id: "minecraft:netherite_block" },
+  { name: "Rainbow Mix (different block each level) 🌈", id: null }
+];
+const BEACON_MIX_LAYERS = ["minecraft:iron_block", "minecraft:gold_block", "minecraft:emerald_block", "minecraft:diamond_block"];
+
+const BEACON_BEAM_COLOURS = [
+  { name: "Plain white beam", id: null },
+  { name: "Red 🔴", id: "minecraft:red_stained_glass" },
+  { name: "Orange 🟠", id: "minecraft:orange_stained_glass" },
+  { name: "Yellow 🟡", id: "minecraft:yellow_stained_glass" },
+  { name: "Lime 🟢", id: "minecraft:lime_stained_glass" },
+  { name: "Green 🌲", id: "minecraft:green_stained_glass" },
+  { name: "Light Blue 🩵", id: "minecraft:light_blue_stained_glass" },
+  { name: "Blue 🔵", id: "minecraft:blue_stained_glass" },
+  { name: "Purple 🟣", id: "minecraft:purple_stained_glass" },
+  { name: "Magenta 💜", id: "minecraft:magenta_stained_glass" },
+  { name: "Pink 🌸", id: "minecraft:pink_stained_glass" },
+  { name: "Cyan 🧊", id: "minecraft:cyan_stained_glass" },
+  { name: "Black ⚫", id: "minecraft:black_stained_glass" }
+];
+
+/** Highest block the beacon's sky column may clear in this dimension (keeps the Nether roof intact). */
+function beaconSkyLimit(dimensionId) {
+  const range = getBuildRangeForDimension(dimensionId);
+  const isNether = String(dimensionId).replace(/^minecraft:/, "") === "nether";
+  return isNether ? Math.min(range.max, NETHER_CEILING_SCAN_Y) : range.max;
+}
+
+function createBeaconPlan(player, levels, materialIndex, beamIndex, clearSky) {
+  levels = clampNumber(Math.round(levels), 1, 4);
+  const material = BEACON_BASE_MATERIALS[materialIndex] || BEACON_BASE_MATERIALS[0];
+  const beam = BEACON_BEAM_COLOURS[beamIndex] || BEACON_BEAM_COLOURS[0];
+  const size = 2 * levels + 1;
+  const centre = levels;
+  const c = createOrientedBuildContext(player, size, size, 0);
+  const q = [];
+  for (let level = 0; level < levels; level++) {
+    const half = levels - level;
+    const blockId = material.id || BEACON_MIX_LAYERS[level % BEACON_MIX_LAYERS.length];
+    q.push(fillLocal(c, centre - half, level, centre - half, centre + half, level, centre + half, blockId));
+  }
+  q.push(setLocal(c, centre, levels, centre, "minecraft:beacon"));
+  let top = levels;
+  if (beam.id) {
+    top += 1;
+    q.push(setLocal(c, centre, top, centre, beam.id));
+  }
+  let skyTop = top;
+  if (clearSky) {
+    skyTop = Math.max(top, beaconSkyLimit(player.dimension.id) - c.baseY);
+    if (skyTop > top) pushLargeFill(q, c, centre, top + 1, centre, centre, skyTop, centre, "minecraft:air");
+  }
+  const plan = makePlan(player, "Beacon", c, q, localBounds(c, 0, 0, 0, size - 1, skyTop, size - 1));
+  plan.batchSize = SHAPE_BATCH_SIZE;
+  plan.levels = levels;
+  plan.material = material.name;
+  plan.beam = beam.name;
+  return plan;
+}
+
+function openShapeBuilderMenu(player) {
+  const form = new ActionFormData()
+    .title("🔷 Shapes & Beacons")
+    .body("Pick a shape. It is placed in front of you, resting at the level of your feet:");
+  for (const shape of SHAPE_TYPES) form.button(`${shape.name}\n§7${shape.description}`);
+  form.button("✨ Beacon with Pyramid Base\n§7Working beacon on an iron, gold, emerald, diamond or netherite pyramid");
+  form.button("⬅️ Back\n§7Return to Builder Tools");
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    if (response.selection < SHAPE_TYPES.length) return openShapeOptionsMenu(player, SHAPE_TYPES[response.selection]);
+    if (response.selection === SHAPE_TYPES.length) return openBeaconBuilderMenu(player);
+    openBuilderToolsMenu(player);
+  }).catch((e) => console.error("Shape menu error: " + e));
+}
+
+function openShapeOptionsMenu(player, shape) {
+  const form = new ModalFormData()
+    .title(`🔷 ${shape.name}`)
+    .dropdown("Choose Block Type:", BLOCK_OPTIONS.map((b) => b.name), { defaultValueIndex: 0 })
+    .textField("Or Custom Block ID (e.g. quartz_block):", "leave blank if choosing from list");
+  for (const size of shape.sizes) form.slider(size.label, size.min, size.max, { valueStep: size.step, defaultValue: size.defaultValue });
+  form.toggle(shape.hollowLabel, { defaultValue: false });
+  form.toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const values = response.formValues;
+    const blockId = resolveBlockChoice(values[0], values[1]);
+    if (!blockId) {
+      player.sendMessage("§cInvalid block ID. Use a value such as minecraft:quartz_block.§r");
+      return;
+    }
+    const params = {};
+    shape.sizes.forEach((size, i) => {
+      params[size.key] = clampNumber(Math.round(Number(values[2 + i])), size.min, size.max);
+    });
+    const hollow = Boolean(values[2 + shape.sizes.length]);
+    const showGuide = values[3 + shape.sizes.length];
+    const plan = createShapePlan(player, shape.key, params, blockId, hollow);
+    if (!plan || !validateBuildBounds(player, plan.bounds)) return;
+    const confirm = () => executeBuildPlan(player, plan, `shape_${shape.key}`, `🔷 ${plan.name} completed! (${plan.summary}, ${plan.commands.length} fills of ${blockId})`);
+    if (showGuide) {
+      startPreview(player, plan.bounds, "minecraft:villager_happy",
+        `Build a ${plan.name.toLowerCase()} (${plan.summary}) with ${blockId}?`, confirm);
+    } else {
+      confirm();
+    }
+  }).catch((e) => console.error("Shape options error: " + e));
+}
+
+function openBeaconBuilderMenu(player) {
+  const form = new ModalFormData()
+    .title("✨ Beacon with Pyramid Base")
+    .dropdown("Pyramid blocks:", BEACON_BASE_MATERIALS.map((m) => m.name), { defaultValueIndex: 0 })
+    .slider("Pyramid levels (more levels = stronger beacon):", 1, 4, { valueStep: 1, defaultValue: 4 })
+    .dropdown("Beam colour (stained glass on top):", BEACON_BEAM_COLOURS.map((b) => b.name), { defaultValueIndex: 0 })
+    .toggle("Clear the sky straight above the beacon (needed for the beam)", { defaultValue: true })
+    .toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const [materialIndex, levels, beamIndex, clearSky, showGuide] = response.formValues;
+    const plan = createBeaconPlan(player, Number(levels), Number(materialIndex), Number(beamIndex), Boolean(clearSky));
+    if (!validateBuildBounds(player, plan.bounds)) return;
+    const confirm = () => executeBuildPlan(player, plan, "beacon",
+      `✨ Beacon completed on a ${plan.levels}-level ${plan.material.replace(/ \S+$/, "")} pyramid! Tap it to choose its power.`, "random.levelup");
+    const prompt = `Build a ${plan.levels}-level beacon pyramid (${plan.material}, ${plan.beam.toLowerCase()}) here?` +
+      (clearSky ? "\n\nThe column straight above the beacon is cleared so its beam can reach the sky." : "\n\nThe beam only shows if nothing solid is above the beacon.");
+    if (showGuide) startPreview(player, plan.bounds, "minecraft:villager_happy", prompt, confirm);
+    else confirm();
+  }).catch((e) => console.error("Beacon menu error: " + e));
+}
+
+// ==========================================
+// 🏊 SWIMMING POOL
+// ==========================================
+
+const POOL_TILES = [
+  { name: "Quartz (white) ⚪", id: "minecraft:quartz_block" },
+  { name: "Prismarine (sea green) 🟩", id: "minecraft:prismarine" },
+  { name: "Light Blue Concrete 🩵", id: "minecraft:light_blue_concrete" },
+  { name: "Blue Concrete 🔵", id: "minecraft:blue_concrete" },
+  { name: "Cyan Terracotta 🟦", id: "minecraft:cyan_terracotta" },
+  { name: "Stone Bricks 🏛️", id: "minecraft:stone_bricks" }
+];
+
+const POOL_DECKS = [
+  { name: "Smooth Stone 🧱", id: "minecraft:smooth_stone" },
+  { name: "Oak Planks 🪵", id: "minecraft:oak_planks" },
+  { name: "Smooth Quartz ⚪", id: "minecraft:smooth_quartz" },
+  { name: "Sandstone 🏖️", id: "minecraft:sandstone" },
+  { name: "Polished Andesite 🪨", id: "minecraft:polished_andesite" },
+  { name: "No deck (keep the ground)", id: null }
+];
+
+/**
+ * Pool sunk into the ground in front of the player. The water surface is
+ * level with the ground, a tiled rim surrounds it and an optional one-block
+ * deck surrounds the rim. Local y = 0 is ground level.
+ */
+function createPoolPlan(player, width, length, depth, tileId, deckId, lights, divingBoard) {
+  width = clampNumber(Math.round(width), 1, 25);
+  length = clampNumber(Math.round(length), 1, 25);
+  depth = clampNumber(Math.round(depth), 1, 6);
+  const totalWidth = width + 4, totalLength = length + 4;
+  const x2 = totalWidth - 1, z2 = totalLength - 1;
+  const c = createOrientedBuildContext(player, totalWidth, totalLength, -1);
+  const q = [];
+  pushLargeFill(q, c, 0, 1, 0, x2, 3, z2, "minecraft:air");
+  if (deckId) q.push(fillLocal(c, 0, 0, 0, x2, 0, z2, deckId));
+  q.push(fillLocal(c, 1, -depth, 1, x2 - 1, 0, z2 - 1, tileId));
+  q.push(fillLocal(c, 2, 1 - depth, 2, x2 - 2, 0, z2 - 2, "minecraft:water"));
+  if (lights) {
+    const floorY = -depth;
+    const spots = [[2, 2], [x2 - 2, 2], [2, z2 - 2], [x2 - 2, z2 - 2]];
+    if (width >= 3 && length >= 3) spots.push([Math.floor(x2 / 2), Math.floor(z2 / 2)]);
+    const seen = new Set();
+    for (const [x, z] of spots) {
+      const key = `${x},${z}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      q.push(setLocal(c, x, floorY, z, "minecraft:sea_lantern"));
+    }
+  }
+  if (divingBoard && length >= 2) {
+    const cx = Math.floor(x2 / 2);
+    q.push(setLocal(c, cx, 1, 0, deckId || tileId));
+    q.push(fillLocal(c, cx, 1, 1, cx, 1, 3, "minecraft:smooth_stone_slab"));
+  }
+  const plan = makePlan(player, "Swimming Pool", c, q, localBounds(c, 0, -depth, 0, x2, 3, z2));
+  plan.batchSize = VILLAGE_BATCH_SIZE;
+  plan.width = width;
+  plan.length = length;
+  plan.depth = depth;
+  return plan;
+}
+
+function openPoolBuilderMenu(player) {
+  const form = new ModalFormData()
+    .title("🏊 Swimming Pool")
+    .slider("Pool width (blocks of water):", 1, 25, { valueStep: 1, defaultValue: 6 })
+    .slider("Pool length (blocks forward):", 1, 25, { valueStep: 1, defaultValue: 10 })
+    .slider("Depth (blocks of water):", 1, 6, { valueStep: 1, defaultValue: 2 })
+    .dropdown("Pool tiles:", POOL_TILES.map((t) => t.name), { defaultValueIndex: 0 })
+    .dropdown("Deck around the pool:", POOL_DECKS.map((d) => d.name), { defaultValueIndex: 0 })
+    .toggle("Underwater lights (sea lanterns in the floor)", { defaultValue: true })
+    .toggle("Diving board at the near end", { defaultValue: true })
+    .toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const [width, length, depth, tileIndex, deckIndex, lights, divingBoard, showGuide] = response.formValues;
+    const tile = POOL_TILES[tileIndex] || POOL_TILES[0];
+    const deck = POOL_DECKS[deckIndex] || POOL_DECKS[0];
+    const plan = createPoolPlan(player, width, length, depth, tile.id, deck.id, Boolean(lights), Boolean(divingBoard));
+    if (!validateBuildBounds(player, plan.bounds)) return;
+    const confirm = () => executeBuildPlan(player, plan, "pool", `🏊 ${plan.width}×${plan.length} swimming pool completed! Dive in!`, "random.splash");
+    const prompt = `Build a ${plan.width}×${plan.length} pool, ${plan.depth} deep, with ${tile.name} tiles` +
+      `${deck.id ? ` and a ${deck.name} deck` : ""}?\n\nIt is sunk into the ground so the water is level with the surface.`;
+    if (showGuide) startPreview(player, plan.bounds, "minecraft:villager_happy", prompt, confirm);
+    else confirm();
+  }).catch((e) => console.error("Pool menu error: " + e));
+}
+
+// ==========================================
+// 🌊 DRAIN WATER & LAVA
+// ==========================================
+
+const DRAIN_WATER_BLOCKS = ["minecraft:water", "minecraft:flowing_water", "minecraft:bubble_column"];
+const DRAIN_LAVA_BLOCKS = ["minecraft:lava", "minecraft:flowing_lava"];
+const DRAIN_MAX_RADIUS = 25;
+
+const DRAIN_CHOICES = [
+  { name: "💧 Water only", blocks: DRAIN_WATER_BLOCKS, label: "water" },
+  { name: "🔥 Lava only", blocks: DRAIN_LAVA_BLOCKS, label: "lava" },
+  { name: "💧🔥 Water and lava", blocks: [...DRAIN_WATER_BLOCKS, ...DRAIN_LAVA_BLOCKS], label: "water and lava" }
+];
+
+/** Cube of `radius` blocks around the player, clamped to the dimension height. */
+function createDrainPlan(player, radius, choiceIndex) {
+  radius = clampNumber(Math.round(radius), 1, DRAIN_MAX_RADIUS);
+  const choice = DRAIN_CHOICES[choiceIndex] || DRAIN_CHOICES[2];
+  const loc = player.location;
+  const px = Math.floor(loc.x), py = Math.floor(loc.y), pz = Math.floor(loc.z);
+  const range = getDimensionBuildRange(player);
+  const bounds = {
+    x1: px - radius, x2: px + radius,
+    y1: clampNumber(py - radius, range.min, range.max), y2: clampNumber(py + radius, range.min, range.max),
+    z1: pz - radius, z2: pz + radius
+  };
+  const commands = [];
+  for (const liquid of choice.blocks) pushLargeWorldFill(commands, bounds, "minecraft:air", `replace ${liquid}`);
+  return {
+    name: `${choice.label} drain`, dimensionId: player.dimension.id, commands, bounds,
+    batchSize: 5, tolerateFailures: true, radius, label: choice.label
+  };
+}
+
+function openDrainLiquidMenu(player) {
+  const form = new ModalFormData()
+    .title("🌊 Drain Water & Lava")
+    .slider("Radius around you (blocks):", 3, DRAIN_MAX_RADIUS, { valueStep: 1, defaultValue: 10 })
+    .dropdown("What to remove:", DRAIN_CHOICES.map((c) => c.name), { defaultValueIndex: 2 })
+    .toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const [radius, choiceIndex, showGuide] = response.formValues;
+    const plan = createDrainPlan(player, Number(radius), Number(choiceIndex));
+    if (!validateBuildBounds(player, plan.bounds)) return;
+    const confirm = () => executeBuildPlan(player, plan, "drain",
+      `🌊 Removed all ${plan.label} within ${plan.radius} blocks of you! Liquid outside that area may flow back in.`, "random.splash");
+    const prompt = `Remove all ${plan.label} within ${plan.radius} blocks of you (the glowing box)?\n\nUse Undo Last Build to put it back.`;
+    if (showGuide) startPreview(player, plan.bounds, "minecraft:wax_particle", prompt, confirm);
+    else confirm();
+  }).catch((e) => console.error("Drain menu error: " + e));
 }
 
 function openBridgeAndStairMenu(player) {

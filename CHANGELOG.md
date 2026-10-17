@@ -2,6 +2,20 @@
 
 Release notes for the Helper Tools add-on, newest first. Each release bumps both pack manifests so Minecraft recognises the update.
 
+## Version 1.4.0 changes
+
+- 🔷 New **Shapes & Beacons** submenu under 🏗️ Builder Tools. Build a sphere, dome, stepped pyramid, cylinder or tower (height 1 makes a disc or ring) or cone, solid or hollow, in any block from the list or a typed block ID. Sizes go up to a radius of 25 and a pyramid base of 61. Hollow shapes are always one block thick with no gaps. Large shapes are built in batches over a few game ticks.
+- ✨ **Beacon with Pyramid Base** builds a working beacon on a 1 to 4 level pyramid of iron, gold, emerald, diamond or netherite blocks (or a rainbow mix), with an optional stained-glass beam colour. The column straight above the beacon can be cleared to the sky so the beam shows; in the Nether the clearing stops below the bedrock roof.
+- 🧱 **Build / Fill Blocks** has a new **Build Direction** choice: upwards from your feet (as before) or downwards into the ground below your feet.
+- 🌊 New **Drain Water & Lava** tool removes water, lava or both within 3 to 25 blocks of you, and can be undone.
+- 🏊 New **Swimming Pool** tool sinks a tiled pool into the ground in front of you with the water level with the surface. Choose width, length (1 to 25) and depth (1 to 6), the tile colour, a deck material or no deck, underwater sea lanterns and a diving board.
+- 🏡 New **House Designs** submenu with eight furnished houses that have real doors: Cosy Cottage (pitched stair roof and smoking chimney), A-Frame Cabin, Modern Villa (two storeys, internal stairs, roof terrace and driveway), Stone Watchtower (three floors joined by a ladder, with battlements and a flag), and the Modern Bungalow, Carport House, Studio Cabin and Family Home from the village. Every design can be built in seven styles: the three village colour schemes plus Rustic Oak & Cobblestone, Spruce Lodge, Desert Sandstone and Cherry Blossom.
+- 🏠 The Simple House, Large Two-Storey House and Tree House starter templates now have doors in their doorways.
+- Fill commands with a `replace <block>` filter are understood by the no-op check, and builds can mark themselves as tolerant of fills that change nothing (used by the drain tool).
+- Both packs and all three installers are updated to version 1.4.0 so Minecraft can recognize the update.
+
+Run `node tests/regression.cjs` for the 43 mocked Script API regression tests. New tests cover both fill directions, the drain plan, every shape (including a check that hollow shells have no holes), the beacon, the pool, all eight house designs in all four facings and all seven styles, the starter-template doors and the Builder Tools menu wiring. Minecraft itself is not available in the automated test environment, so try the new tools in a disposable world first. In particular check that the beacon activates and its beam colour shows, that roof stairs, doors and the watchtower ladder face the right way, that the flattened block names used by the new styles (for example `cut_sandstone`, `stone_brick_slab`, `pink_terracotta` and the stained glass colours) all exist on your version, and that draining a pond does not leave water flowing back in from outside the box.
+
 ## Version 1.3.0 changes
 
 - 🏘️ New **Build a Modern Village** tool under 🏗️ Builder Tools. It places a 61×61 village in front of you with four furnished houses of different designs, a three-storey apartment block, a cafe with a flat above, two farms, a plaza with a well, and lit roads. Choose a colour scheme (Crisp White, Charcoal & Oak, or Sandstone & Spruce), optionally flatten the ground first, and confirm from the 3D preview. The whole village fits in one undo snapshot, so **↩️ Undo Last Build** removes it again.

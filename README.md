@@ -1,8 +1,8 @@
 # 🪄 Helper Tools: a Minecraft Bedrock Add-On
 
-**Current version: 1.3.0** · Requires Minecraft Bedrock **1.26.40 or newer** · No experiments needed
+**Current version: 1.4.0** · Requires Minecraft Bedrock **1.26.40 or newer** · No experiments needed
 
-Helper Tools gives every player a **Helper Device**, a glowing magic wand. Use it and a colourful menu opens with one-tap helpers: change the time or weather, heal up, escape from a cave, gain superpowers, summon tame pets, teleport to friends or biomes, and build anything from a simple hole to a whole furnished village. Builder tools show a glowing 3D preview in the world before anything changes, and the last build can be undone.
+Helper Tools gives every player a **Helper Device**, a glowing magic wand. Use it and a colourful menu opens with one-tap helpers: change the time or weather, heal up, escape from a cave, gain superpowers, summon tame pets, teleport to friends or biomes, and build anything from a simple hole to a whole furnished village, a glowing beacon, a sphere or a swimming pool. Builder tools show a glowing 3D preview in the world before anything changes, and the last build can be undone.
 
 It was made with younger players in mind, so every option is a big labelled button and nothing needs typing in chat. It works just as well for grown-ups who want quick building and travel tools.
 
@@ -17,7 +17,7 @@ The Helper Device menu has six sections.
 | 🎮 **Game Modes & Time** | Day, night, clear weather, Creative and Survival mode |
 | 🛡️ **Life Savers & Rescue** | Heal and feed, clear nearby monsters, cave rescue, fire shield, cure effects |
 | ⚡ **Superpowers & Flying** | Night vision, super speed and jump, Elytra with rockets |
-| 🏗️ **Builder Tools** | Dig, fill, flatten, platforms, houses, a whole village, bridges, stairs, torches, cleanup, undo |
+| 🏗️ **Builder Tools** | Dig, fill, flatten, platforms, houses, a whole village, shapes and beacons, swimming pools, draining water and lava, bridges, stairs, torches, cleanup, undo |
 | 📍 **Spawn & Teleport** | Set and return to spawn, teleport to players, find biomes and structures, go to coordinates |
 | 🐾 **Pets & Companions** | Tame dog, cat, parrot, saddled horse, iron golem, axolotl |
 
@@ -44,11 +44,15 @@ Builds are placed in front of you, in the direction you are facing.
 | Tool | Options |
 | --- | --- |
 | 🕳️ **Dig an Empty Hole** | Width, depth and length (1 to 25 blocks each), optional hollow shell |
-| 🧱 **Build / Fill Blocks** | 30+ blocks to pick from or any block ID you type, width, height and length (1 to 25), solid or hollow (an instant room) |
+| 🧱 **Build / Fill Blocks** | 30+ blocks to pick from or any block ID you type, width, height and length (1 to 25), solid or hollow (an instant room), built upwards from your feet or downwards into the ground |
 | 🚜 **Flatten / Level Ground** | Clears trees and hills in a 5 to 20 block radius and lays a fresh floor |
 | 🪜 **Instant Underfoot Platform** | 3×3 up to 9×9 platform right under your feet |
-| 🏠 **Starter Base Templates** | Furnished Simple House, Large Two-Storey House, Stone Fort, Tree House or Underground Bunker |
+| 🏠 **Starter Base Templates** | Furnished Simple House, Large Two-Storey House, Stone Fort, Tree House or Underground Bunker. The houses now have real doors. |
+| 🏡 **House Designs** | Eight furnished houses with doors: Cosy Cottage (pitched roof and chimney), A-Frame Cabin, Modern Villa (two storeys with a roof terrace), Stone Watchtower (ladder up three floors), Modern Bungalow, Carport House, Studio Cabin and Family Home. Each can be built in seven styles: Crisp White, Charcoal & Oak, Sandstone & Spruce, Rustic Oak & Cobblestone, Spruce Lodge, Desert Sandstone or Cherry Blossom. |
 | 🏘️ **Build a Modern Village** | A 61×61 village: four furnished houses, a three-storey apartment block, a cafe with a flat upstairs, a crop farm, an orchard with a glasshouse and a plaza with a well, joined by lit roads. Three colour schemes. |
+| 🔷 **Shapes & Beacons** | Sphere, dome, stepped pyramid, cylinder or tower (height 1 gives a disc or ring) and cone, solid or hollow, in any block from the list or a typed block ID. Radius up to 25, pyramid base up to 61. Plus a working beacon on a 1 to 4 level pyramid of iron, gold, emerald, diamond, netherite or a rainbow mix, with an optional coloured beam and the sky above cleared. |
+| 🏊 **Swimming Pool** | Pool 1 to 25 blocks wide and long, 1 to 6 deep, sunk into the ground with the water level with the surface. Six tile colours, five deck materials (or none), underwater sea lanterns and a diving board. |
+| 🌊 **Drain Water & Lava** | Removes water, lava or both within 3 to 25 blocks of you. Undoable. |
 | 🌉 **Bridge & Stair Builder** | Bridges 3 to 50 blocks long with optional railings; staircases up or down, 1, 3 or 5 blocks wide, with optional headroom clearing |
 | 💡 **Light Up Area** | Places torches in a grid on the ground around you so monsters can't spawn |
 | 🧹 **Area Cleanup** | Removes dropped items, XP orbs, arrows, boats and minecarts or hostile mobs within 10 to 100 blocks. Players, pets, villagers and friendly mobs are protected. |
@@ -137,11 +141,15 @@ Pick a section, then a tool. Every sub-menu has a **⬅️ Back** button.
 5. Made a mistake? Use **↩️ Undo Last Build/Hole**.
 
 About undo:
-- It remembers **one** build per player: your most recent dig, fill, flatten, platform, base, village, bridge or staircase. A new build replaces the saved one.
+- It remembers **one** build per player: your most recent dig, fill, flatten, platform, base, house, village, shape, beacon, pool, drain, bridge or staircase. A new build replaces the saved one.
 - The undo is kept in memory, so it is lost when the world is closed.
 - Torches from **Light Up Area** and things removed by **Area Cleanup** can't be undone.
 
 For the **Modern Village**, find a reasonably open area, leave **Flatten and prepare the ground first** on unless the land is already flat, and wait a couple of seconds while it builds in stages.
+
+Shapes rest on the ground at your feet and start one block in front of you, so stand back from where you want the middle to be. Large hollow spheres and cones are placed over a few seconds. A **Beacon** only shines when nothing solid is straight above it, so leave **Clear the sky** on unless you are already outdoors. After it is built, tap the beacon block to pick its power.
+
+The **Swimming Pool** is dug into the ground in front of you, so stand on flat land at the level you want the deck. **Drain Water & Lava** clears a cube around you; water from outside the cube can flow back in, so drain a little wider than the pond you want gone.
 
 ### Finding biomes
 Open **📍 Spawn & Teleport** ➔ **🌎 Find Nearest Biome**, pick a biome, and press **🚀 Teleport There Now** in the result window. Choose **✅ Done** instead to just keep the coordinates. The search uses the world seed, so places you have changed may look different from how they were generated. Underground biomes such as Lush Caves and Deep Dark land you near the depth where the biome was found.
