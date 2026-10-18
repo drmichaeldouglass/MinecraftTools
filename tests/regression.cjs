@@ -926,6 +926,10 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.ok(observer.includes(`"minecraft:facing_direction"="${towardsPlayer[1]}"`), observer);
       } else if (key === 'spawner_farm') {
         assert.equal(countBlocks(placed, v => v === 'minecraft:mob_spawner'), 1);
+        const waiting = ctx.localPoint(plan.context, 9, 1, 0);
+        assert.equal(dimension.getBlock(waiting).typeId, 'minecraft:mob_spawner', 'the spawner waits in front of the sealed room');
+        assert.equal(JSON.stringify(plan.spawner), JSON.stringify({ from: waiting, to: ctx.localPoint(plan.context, 9, 5, 7) }));
+        assert.equal(dimension.getBlock(plan.spawner.to).typeId, 'minecraft:air');
         assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 19);
         assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
         const gap = ctx.localPoint(plan.context, 9, 1, 2), pit = ctx.localPoint(plan.context, 9, 1, 3), floor = ctx.localPoint(plan.context, 9, 0, 3);
@@ -945,7 +949,10 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.equal(countBlocks(placed, v => v === 'minecraft:stone_button'), 1);
         assert.equal(plan.commands.filter(c => /^replaceitem block .* slot\.container 0 minecraft:water_bucket 1$/.test(c)).length, 5);
       } else if (key === 'wool_farm') {
-        for (const [id, n] of [['minecraft:grass_block', 1], ['minecraft:observer', 1], ['minecraft:dispenser', 1], ['minecraft:rail', 1], ['minecraft:hopper', 2], ['minecraft:chest', 1], ['minecraft:redstone_wire', 1]]) {
+        // Eaten grass only grows back from a neighbouring grass block.
+        for (const [x, z] of [[1, 2], [3, 2], [2, 3]]) assert.equal(dimension.getBlock(ctx.localPoint(plan.context, x, 0, z)).typeId, 'minecraft:grass_block');
+        assert.equal(dimension.getBlock(ctx.localPoint(plan.context, 2, 0, 1)).typeId, 'minecraft:observer');
+        for (const [id, n] of [['minecraft:grass_block', 8], ['minecraft:observer', 1], ['minecraft:dispenser', 1], ['minecraft:rail', 1], ['minecraft:hopper', 2], ['minecraft:chest', 1], ['minecraft:redstone_wire', 1]]) {
           assert.equal(countBlocks(placed, v => v === id), n, id);
         }
         assert.ok(plan.commands.some(c => /^summon minecraft:sheep -?\d+\.5 \d+ -?\d+\.5$/.test(c)));
@@ -986,6 +993,44 @@ test('redstone contraptions build in every facing with working parts and undo', 
   assert.equal(base.ctx.createStreetLampPlan(base.player, 12), null);
   assert.equal(base.ctx.createBubbleElevatorPlan(base.player, 99, false).height, 60);
   assert.equal(base.ctx.createRailwayPlan(base.player, 1).length, 5);
+});
+
+test('tapping the waiting spawner with a spawn egg moves it into the sealed farm room', async () => {
+  const { ctx, player, dimension, tick, callbacks } = harness();
+  const props = {};
+  ctx.world.getDynamicProperty = k => props[k];
+  ctx.world.setDynamicProperty = (k, v) => { if (v === undefined) delete props[k]; else props[k] = v; };
+  const commands = [];
+  dimension.runCommand = c => { commands.push(c); return { successCount: 1 }; };
+  player.getComponent = () => ({ container: { addItem: () => undefined } });
+  ctx.ItemStack = class { constructor(typeId) { this.typeId = typeId; } };
+  const plan = ctx.createSpawnerFarmPlan(player);
+  const contraption = vm.runInContext('CONTRAPTIONS', ctx).find(c => c.key === 'spawner_farm');
+  contraption.after(player, { mob: 0 }, plan);
+  assert.equal(JSON.parse(props.pending_farm_spawners).length, 1);
+  assert.ok(player.messages.some(m => m.includes('in front of the farm')), player.messages.join('\n'));
+  const tap = (location, typeId, item = 'minecraft:zombie_spawn_egg') => ctx.handleFarmSpawnerTap({
+    player, block: { typeId, location, dimension }, beforeItemStack: item && { typeId: item }
+  });
+  tap(plan.spawner.from, 'minecraft:mob_spawner', 'minecraft:diamond');
+  tap(plan.spawner.from, 'minecraft:stone');
+  tap({ x: 999, y: 64, z: 999 }, 'minecraft:mob_spawner');
+  await tick();
+  assert.equal(commands.length, 0, 'other blocks, items and spawners are left alone');
+  tap(plan.spawner.from, 'minecraft:mob_spawner');
+  await tick();
+  const { from, to } = plan.spawner;
+  assert.deepEqual(commands, [`clone ${from.x} ${from.y} ${from.z} ${from.x} ${from.y} ${from.z} ${to.x} ${to.y} ${to.z} replace move`]);
+  await tick();
+  assert.ok(player.messages.some(m => m.includes('now in the dark room')), player.messages.join('\n'));
+  assert.equal(props.pending_farm_spawners, undefined, 'nothing is left waiting');
+  // A failed move keeps the spawner waiting so another tap can retry.
+  contraption.after(player, { mob: 0 }, plan);
+  dimension.runCommand = () => { throw new Error('unloaded'); };
+  tap(plan.spawner.from, 'minecraft:mob_spawner');
+  await tick(); await tick();
+  assert.ok(player.messages.some(m => m.includes('Could not move the spawner')), player.messages.join('\n'));
+  assert.equal(JSON.parse(props.pending_farm_spawners).length, 1);
 });
 
 test('contraption menu builds from its options form and then gives the railway minecart', async () => {
