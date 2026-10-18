@@ -885,7 +885,7 @@ test('redstone contraptions build in every facing with working parts and undo', 
       railway: ctx.createRailwayPlan(player, 10)
     };
     for (const [key, plan] of Object.entries(plans)) {
-      const blockCommands = plan.commands.filter(c => !c.startsWith('replaceitem') && !c.startsWith('summon'));
+      const blockCommands = plan.commands.filter(c => !/^(replaceitem|summon|structure) /.test(c));
       assertCommandsInside(ctx, { ...plan, commands: blockCommands }, limit);
       player.messages.length = 0;
       await settle(ctx.executeBuildPlan(player, plan, `contraption_${key}`, `${key} done`), tick);
@@ -925,11 +925,11 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.ok(piston.includes(`"facing_direction"=${towardsPlayer[0]}`), piston);
         assert.ok(observer.includes(`"minecraft:facing_direction"="${towardsPlayer[1]}"`), observer);
       } else if (key === 'spawner_farm') {
-        assert.equal(countBlocks(placed, v => v === 'minecraft:mob_spawner'), 1);
-        const waiting = ctx.localPoint(plan.context, 9, 1, 0);
-        assert.equal(dimension.getBlock(waiting).typeId, 'minecraft:mob_spawner', 'the spawner waits in front of the sealed room');
-        assert.equal(JSON.stringify(plan.spawner), JSON.stringify({ from: waiting, to: ctx.localPoint(plan.context, 9, 5, 7) }));
-        assert.equal(dimension.getBlock(plan.spawner.to).typeId, 'minecraft:air');
+        assert.equal(countBlocks(placed, v => v === 'minecraft:mob_spawner'), 0, 'the spawner comes from a preset structure');
+        const spawner = ctx.localPoint(plan.context, 9, 5, 7);
+        assert.equal(JSON.stringify(plan.spawner), JSON.stringify(spawner));
+        assert.equal(plan.commands.filter(c => c.startsWith('structure')).join('\n'), `structure load "helpertools:zombie_spawner" ${spawner.x} ${spawner.y} ${spawner.z}`);
+        assert.equal(dimension.getBlock(spawner).typeId, 'minecraft:air', 'the spawner sits in the open part of the dark room');
         assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 19);
         assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
         const gap = ctx.localPoint(plan.context, 9, 1, 2), pit = ctx.localPoint(plan.context, 9, 1, 3), floor = ctx.localPoint(plan.context, 9, 0, 3);
@@ -1042,6 +1042,9 @@ test('spawner farm keeps baby zombies behind a half-height kill slot and collect
     const plan = ctx.createSpawnerFarmPlan(player);
     replayContraption(ctx, dimension, plan);
     const get = (x, y, z) => dimension.getBlock(ctx.localPoint(plan.context, x, y, z));
+    for (const [x, y, z] of [[9, 4, 7], [9, 6, 7], [8, 5, 7], [10, 5, 7], [9, 5, 6], [9, 5, 8]]) {
+      assert.equal(get(x, y, z).typeId, 'minecraft:air', 'mobs have room to spawn around the spawner');
+    }
     const slot = get(9, 1, 2);
     assert.equal(slot.typeId, 'minecraft:smooth_stone_slab');
     assert.equal(slot.permutation.getState('minecraft:vertical_half'), 'top');
@@ -1052,7 +1055,7 @@ test('spawner farm keeps baby zombies behind a half-height kill slot and collect
     assert.equal(get(9, 0, 3).typeId, 'minecraft:hopper', 'drops enter the collection system at the kill pit');
     assert.equal(get(10, 0, 1).typeId, 'minecraft:chest');
     assert.equal(get(10, 1, 1).typeId, 'minecraft:air', 'the output chest can be opened');
-    assertCommandsInside(ctx, plan, vm.runInContext('FILL_COMMAND_LIMIT', ctx));
+    assertCommandsInside(ctx, { ...plan, commands: plan.commands.filter(c => !c.startsWith('structure ')) }, vm.runInContext('FILL_COMMAND_LIMIT', ctx));
   }
 });
 
@@ -1139,42 +1142,35 @@ test('launcher, flood farm and cane farm have continuous powered routes to every
   }
 });
 
-test('tapping the waiting spawner with a spawn egg moves it into the sealed farm room', async () => {
-  const { ctx, player, dimension, tick, callbacks } = harness();
-  const props = {};
-  ctx.world.getDynamicProperty = k => props[k];
-  ctx.world.setDynamicProperty = (k, v) => { if (v === undefined) delete props[k]; else props[k] = v; };
-  const commands = [];
-  dimension.runCommand = c => { commands.push(c); return { successCount: 1 }; };
-  player.getComponent = () => ({ container: { addItem: () => undefined } });
-  ctx.ItemStack = class { constructor(typeId) { this.typeId = typeId; } };
-  const plan = ctx.createSpawnerFarmPlan(player);
-  const contraption = vm.runInContext('CONTRAPTIONS', ctx).find(c => c.key === 'spawner_farm');
-  contraption.after(player, { mob: 0 }, plan);
-  assert.equal(JSON.parse(props.pending_farm_spawners).length, 1);
-  assert.ok(player.messages.some(m => m.includes('in front of the farm')), player.messages.join('\n'));
-  const tap = (location, typeId, item = 'minecraft:zombie_spawn_egg') => ctx.handleFarmSpawnerTap({
-    player, block: { typeId, location, dimension }, beforeItemStack: item && { typeId: item }
+test('spawner farm loads a preset spawner structure that ships with the behavior pack', () => {
+  const { ctx, player } = harness();
+  const { SPAWNER_MOBS, STRUCTURE_DIR, spawnerStructure } = require('../tools/make_spawner_structures.cjs');
+  const mobs = vm.runInContext('SPAWNER_FARM_MOBS', ctx);
+  assert.equal(mobs.length, SPAWNER_MOBS.length);
+  mobs.forEach((mob, i) => {
+    const plan = ctx.createSpawnerFarmPlan(player, i);
+    const spawner = ctx.localPoint(plan.context, 9, 5, 7);
+    assert.ok(plan.commands.includes(`structure load "${mob.structure}" ${spawner.x} ${spawner.y} ${spawner.z}`), mob.structure);
+    assert.equal(plan.mob, mob.label);
+    const [namespace, name] = mob.structure.split(':');
+    assert.equal(namespace, path.basename(STRUCTURE_DIR));
+    const source = SPAWNER_MOBS.find(m => m.name === name);
+    assert.ok(source, `${name} is generated`);
+    assert.equal(source.entity, `minecraft:${mob.label}`);
+    const file = fs.readFileSync(path.join(STRUCTURE_DIR, `${name}.mcstructure`));
+    assert.ok(file.equals(spawnerStructure(source)), `${name}.mcstructure is up to date; run node tools/make_spawner_structures.cjs`);
+    for (const text of ['minecraft:mob_spawner', 'MobSpawner', 'EntityIdentifier', source.entity]) {
+      assert.ok(file.includes(Buffer.from(text)), `${name} contains ${text}`);
+    }
   });
-  tap(plan.spawner.from, 'minecraft:mob_spawner', 'minecraft:diamond');
-  tap(plan.spawner.from, 'minecraft:stone');
-  tap({ x: 999, y: 64, z: 999 }, 'minecraft:mob_spawner');
-  await tick();
-  assert.equal(commands.length, 0, 'other blocks, items and spawners are left alone');
-  tap(plan.spawner.from, 'minecraft:mob_spawner');
-  await tick();
-  const { from, to } = plan.spawner;
-  assert.deepEqual(commands, [`clone ${from.x} ${from.y} ${from.z} ${from.x} ${from.y} ${from.z} ${to.x} ${to.y} ${to.z} replace move`]);
-  await tick();
-  assert.ok(player.messages.some(m => m.includes('now in the dark room')), player.messages.join('\n'));
-  assert.equal(props.pending_farm_spawners, undefined, 'nothing is left waiting');
-  // A failed move keeps the spawner waiting so another tap can retry.
-  contraption.after(player, { mob: 0 }, plan);
-  dimension.runCommand = () => { throw new Error('unloaded'); };
-  tap(plan.spawner.from, 'minecraft:mob_spawner');
-  await tick(); await tick();
-  assert.ok(player.messages.some(m => m.includes('Could not move the spawner')), player.messages.join('\n'));
-  assert.equal(JSON.parse(props.pending_farm_spawners).length, 1);
+});
+
+test('city and builds only use block names that exist in Bedrock', () => {
+  const source = fs.readFileSync(process.env.TOOLS_SOURCE || path.join(__dirname, '../Behavior_Pack/scripts/main.js'), 'utf8');
+  // Java names whose Bedrock blocks are still called something else.
+  for (const javaOnly of ['minecraft:terracotta"', 'minecraft:spawner"']) {
+    assert.ok(!source.includes(`"${javaOnly}`), `${javaOnly.slice(0, -1)} is not a Bedrock block`);
+  }
 });
 
 test('contraption menu builds from its options form and then gives the railway minecart', async () => {
@@ -1197,7 +1193,8 @@ test('contraption menu builds from its options form and then gives the railway m
   ctx.openContraptionOptionsMenu(player, byKey('spawner_farm'));
   for (let i = 0; i < 10; i++) await tick();
   assert.ok(player.messages.some(m => m.includes('XP farm built')), player.messages.join('\n'));
-  assert.equal(given[1].typeId, 'minecraft:skeleton_spawn_egg');
+  assert.equal(given.length, 1, 'the spawner farm needs no spawn egg');
+  assert.ok(player.messages.some(m => m.includes('skeleton spawner is working')), player.messages.join('\n'));
   player.messages.length = 0;
   modalForm(ctx, [], [false]);
   ctx.openContraptionOptionsMenu(player, byKey('water_source'));

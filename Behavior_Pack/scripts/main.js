@@ -2350,7 +2350,7 @@ const CITY_TOWER_STYLES = [
   { wall: "minecraft:white_concrete", glass: "minecraft:glass", trim: "minecraft:light_gray_concrete" },
   { wall: "minecraft:black_concrete", glass: "minecraft:gray_stained_glass", trim: "minecraft:gray_concrete" },
   { wall: "minecraft:gray_concrete", glass: "minecraft:cyan_stained_glass", trim: "minecraft:white_concrete" },
-  { wall: "minecraft:terracotta", glass: "minecraft:glass", trim: "minecraft:quartz_block" }
+  { wall: "minecraft:hardened_clay", glass: "minecraft:glass", trim: "minecraft:quartz_block" }
 ];
 
 /** Furnishes the four corner rooms of a tower storey; `room` is called with the room's local box and its door side. */
@@ -3796,10 +3796,11 @@ function createRailwayPlan(player, length) {
  * Monster spawner XP farm. The spawner works in a dark room; water streams
  * flush the mobs into a trench and down a chute into a two-deep pit. The
  * player stands outside and hits their legs through a half-block gap. The room
- * is sealed, so the empty spawner is built in front of the farm where the
- * player can tap it with the spawn egg; the tap moves it into the room.
+ * is sealed, so the spawner is loaded from a structure in the behavior pack
+ * that already has its mob set (see tools/make_spawner_structures.cjs).
  */
-function createSpawnerFarmPlan(player) {
+function createSpawnerFarmPlan(player, mobIndex = 0) {
+  const mob = SPAWNER_FARM_MOBS[mobIndex] || SPAWNER_FARM_MOBS[0];
   const c = createOrientedBuildContext(player, 19, 13, -1);
   const q = [];
   const stone = "minecraft:stone_bricks";
@@ -3819,68 +3820,16 @@ function createSpawnerFarmPlan(player) {
   q.push(fillLocal(c, 1, 4, 11, 17, 4, 11, "minecraft:water"));
   q.push(setLocal(c, 1, 3, 3, "minecraft:water"));
   q.push(setLocal(c, 17, 3, 3, "minecraft:water"));
-  q.push(setLocal(c, 9, 1, 0, "minecraft:mob_spawner"));
+  const spawner = localPoint(c, 9, 5, 7);
+  q.push(`structure load "${mob.structure}" ${spawner.x} ${spawner.y} ${spawner.z}`);
   q.push(setLocal(c, 7, 1, 1, "minecraft:lantern"));
   q.push(setLocal(c, 11, 1, 1, "minecraft:lantern"));
   const plan = makePlan(player, "Spawner XP Farm", c, q, localBounds(c, 0, -1, 0, 18, 7, 12));
   plan.batchSize = CONTRAPTION_BATCH_SIZE;
-  plan.spawner = { from: localPoint(c, 9, 1, 0), to: localPoint(c, 9, 5, 7) };
+  plan.spawner = spawner;
+  plan.mob = mob.label;
   return plan;
 }
-
-// Spawner XP farms whose spawner is still waiting in front of the farm for its
-// spawn egg, saved on the world so a reload does not strand it there.
-const PENDING_SPAWNERS_KEY = "pending_farm_spawners";
-
-function loadPendingSpawners() {
-  try {
-    const list = JSON.parse(world.getDynamicProperty(PENDING_SPAWNERS_KEY) || "[]");
-    return Array.isArray(list) ? list : [];
-  } catch (e) {
-    return [];
-  }
-}
-
-function savePendingSpawners(list) {
-  try {
-    world.setDynamicProperty(PENDING_SPAWNERS_KEY, list.length ? JSON.stringify(list) : undefined);
-  } catch (e) {}
-}
-
-function samePoint(a, b) {
-  return a.x === b.x && a.y === b.y && a.z === b.z;
-}
-
-function addPendingSpawner(dimensionId, spawner) {
-  const list = loadPendingSpawners().filter((e) => !(e.dimensionId === dimensionId && samePoint(e.from, spawner.from)));
-  list.push({ dimensionId, from: spawner.from, to: spawner.to });
-  savePendingSpawners(list);
-}
-
-/** Moves a farm's spawner into its dark room once a spawn egg has set its mob. */
-function handleFarmSpawnerTap(event) {
-  const block = event.block;
-  const item = event.beforeItemStack;
-  if (!block || block.typeId !== "minecraft:mob_spawner" || !item || !/_spawn_egg$/.test(item.typeId)) return;
-  const list = loadPendingSpawners();
-  const index = list.findIndex((e) => e.dimensionId === block.dimension.id && samePoint(e.from, block.location));
-  if (index < 0) return;
-  const [entry] = list.splice(index, 1);
-  savePendingSpawners(list);
-  const player = event.player;
-  // Let the egg finish setting the spawner before it is moved.
-  system.runTimeout(() => {
-    const { from, to } = entry;
-    runCommand(getDimensionById(entry.dimensionId), `clone ${from.x} ${from.y} ${from.z} ${from.x} ${from.y} ${from.z} ${to.x} ${to.y} ${to.z} replace move`).then(() => {
-      if (isValidEntity(player)) player.sendMessage("§a🧟 The spawner is now in the dark room. Wait at the gap and hit the mobs' legs.§r");
-    }).catch((e) => {
-      addPendingSpawner(entry.dimensionId, entry);
-      if (isValidEntity(player)) player.sendMessage(`§eCould not move the spawner into the farm: ${e}. Tap it with a spawn egg again.§r`);
-    });
-  }, 2);
-}
-
-if (world.afterEvents.playerInteractWithBlock) world.afterEvents.playerInteractWithBlock.subscribe(handleFarmSpawnerTap);
 
 /**
  * Wheat farm harvested by flooding: a row of dispensers with water buckets
@@ -4030,8 +3979,8 @@ function createWaterSourcePlan(player) {
 }
 
 const SPAWNER_FARM_MOBS = [
-  { name: "Zombies 🧟 (safest, drop rotten flesh and iron)", egg: "minecraft:zombie_spawn_egg", label: "zombie" },
-  { name: "Skeletons 💀 (bones and arrows; they shoot back)", egg: "minecraft:skeleton_spawn_egg", label: "skeleton" }
+  { name: "Zombies 🧟 (safest, drop rotten flesh and iron)", structure: "helpertools:zombie_spawner", label: "zombie" },
+  { name: "Skeletons 💀 (bones and arrows; they shoot back)", structure: "helpertools:skeleton_spawner", label: "skeleton" }
 ];
 
 const CANE_FARM_CROPS = [
@@ -4080,14 +4029,9 @@ const CONTRAPTIONS = [
   {
     key: "spawner_farm", name: "🧟 Spawner XP Farm", description: "Dark spawner room, water flush and a kill slot",
     fields: [{ type: "dropdown", key: "mob", label: "Mob to farm:", options: SPAWNER_FARM_MOBS.map((m) => m.name) }],
-    create: (player) => createSpawnerFarmPlan(player),
-    prompt: () => "Build a monster spawner XP farm here?\n\nYou will get a spawn egg: tap the spawner in front of the farm with it and the spawner moves into the dark room. Then stand at the front and hit the mobs' legs through the gap.",
-    success: () => "🧟 Spawner XP farm built! Tap the spawner in front of the farm with the spawn egg to move it inside, then wait at the gap.",
-    after: (player, v, plan) => {
-      addPendingSpawner(plan.dimensionId, plan.spawner);
-      const mob = SPAWNER_FARM_MOBS[v.mob] || SPAWNER_FARM_MOBS[0];
-      if (giveItemToPlayer(player, mob.egg, 1)) player.sendMessage(`§a🥚 A ${mob.label} spawn egg was added to your inventory. Tap the spawner in front of the farm with it.§r`);
-    }
+    create: (player, v) => createSpawnerFarmPlan(player, v.mob),
+    prompt: (plan) => `Build a ${plan.mob} spawner XP farm here?\n\nThe spawner is already set and sealed inside the dark room. Stand at the half-block gap at the front and hit the mobs' legs.`,
+    success: (plan) => `🧟 Spawner XP farm built! The ${plan.mob} spawner is working inside the dark room. Wait at the gap at the front, hit the mobs' legs, and collect drops from the chest beside it.`
   },
   {
     key: "flood_farm", name: "🌾 Flood Wheat Farm", description: "Press the button to wash the harvest into a chest",

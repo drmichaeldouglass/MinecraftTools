@@ -2,9 +2,10 @@
 
 ## Repository layout
 
-- `Behavior_Pack/`: behavior pack source (manifest, items, custom furniture blocks in `blocks/`, `scripts/main.js`).
+- `Behavior_Pack/`: behavior pack source (manifest, items, custom furniture blocks in `blocks/`, preset spawner structures in `structures/helpertools/`, `scripts/main.js`).
 - `Resource_Pack/`: resource pack source (manifest, textures, furniture block geometry in `models/blocks/`, `blocks.json`, `textures/terrain_texture.json`, language files). The furniture blocks, textures and names are generated together; keep every block's geometry identifier, material textures, `blocks.json` entry and `tile.<id>.name` line in step (the regression tests check this).
 - `tests/regression.cjs`: mocked Script API regression tests.
+- `tools/make_spawner_structures.cjs`: writes the spawner `.mcstructure` files. Rerun it after changing its mob list; the tests fail if the files are out of date.
 - `build.sh`: packages both packs into installers.
 - `dist/`: built installers (`HelperTools.mcaddon`, `HelperTools_BP.mcpack`, `HelperTools_RP.mcpack`). These are committed so users can download them straight from the repository.
 

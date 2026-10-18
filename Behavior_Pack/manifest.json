@@ -4,7 +4,7 @@
     "name": "Helper Tools (Behavior Pack)",
     "description": "Helper Tools Add-On for Minecraft Bedrock - Custom utility device for kids!",
     "uuid": "2267e44d-f170-4b9f-98ce-4b66eef3d4f1",
-    "version": [1, 4, 5],
+    "version": [1, 4, 6],
     "min_engine_version": [1, 26, 40]
   },
   "modules": [
@@ -12,21 +12,21 @@
       "description": "Helper Tools Behavior Data",
       "type": "data",
       "uuid": "dae9aab5-c4eb-4431-9893-86ad239911be",
-      "version": [1, 4, 5]
+      "version": [1, 4, 6]
     },
     {
       "description": "Helper Tools Script Logic",
       "type": "script",
       "language": "javascript",
       "uuid": "39830477-99b1-41c2-ad88-d849e603a2c7",
-      "version": [1, 4, 5],
+      "version": [1, 4, 6],
       "entry": "scripts/main.js"
     }
   ],
   "dependencies": [
     {
       "uuid": "cce7bd3d-db3a-40fc-8194-6ea82a086fae",
-      "version": [1, 4, 5]
+      "version": [1, 4, 6]
     },
     {
       "module_name": "@minecraft/server",
