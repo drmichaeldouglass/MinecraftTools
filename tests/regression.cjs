@@ -864,7 +864,7 @@ test('redstone contraptions build in every facing with working parts and undo', 
   const base = harness();
   const keys = base.evaluate('CONTRAPTIONS.map(c => c.key)');
   const limit = base.evaluate('FILL_COMMAND_LIMIT');
-  assert.equal(keys.join(' '), 'auto_door bubble_elevator firework_launcher sugar_cane_farm spawner_farm flood_farm wool_farm cobble_generator smelter water_source street_lamps railway');
+  assert.equal(keys.join(' '), 'auto_door bubble_elevator firework_launcher sugar_cane_farm spawner_farm flood_farm wool_farm cobble_generator smelter water_source street_lamps railway fruit_farm egg_collector kelp_farm fishing_spot doorbell nether_portal secret_door trading_hall');
   for (let f = 0; f < FACINGS.length; f++) {
     const { ctx, player, dimension, tick } = harness();
     player.getViewDirection = () => FACINGS[f];
@@ -882,7 +882,15 @@ test('redstone contraptions build in every facing with working parts and undo', 
       smelter: ctx.createSmelterPlan(player),
       water_source: ctx.createWaterSourcePlan(player),
       street_lamps: ctx.createStreetLampPlan(player, 12),
-      railway: ctx.createRailwayPlan(player, 10)
+      railway: ctx.createRailwayPlan(player, 10),
+      fruit_farm: ctx.createFruitFarmPlan(player, 3, f % 2),
+      egg_collector: ctx.createEggCollectorPlan(player, 4),
+      kelp_farm: ctx.createKelpFarmPlan(player, 3),
+      fishing_spot: ctx.createFishingSpotPlan(player),
+      doorbell: ctx.createDoorbellPlan(player, f),
+      nether_portal: ctx.createNetherPortalPlan(player, 2, 3),
+      secret_door: ctx.createSecretDoorPlan(player, f),
+      trading_hall: ctx.createTradingHallPlan(player, 4, 0, true)
     };
     for (const [key, plan] of Object.entries(plans)) {
       const blockCommands = plan.commands.filter(c => !/^(replaceitem|summon|structure) /.test(c));
@@ -977,6 +985,38 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.equal(countBlocks(placed, v => v === 'minecraft:daylight_detector_inverted'), 24);
         assert.equal(plan.bounds.y1, 64);
         assert.equal(plan.bounds.y2, 67);
+      } else if (key === 'fruit_farm') {
+        assert.equal(countBlocks(placed, v => v === (f % 2 ? 'minecraft:melon_stem' : 'minecraft:pumpkin_stem')), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:piston'), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:observer'), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:rail'), 3);
+        assert.equal(plan.commands.filter(c => c.startsWith('summon minecraft:hopper_minecart')).length, 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
+      } else if (key === 'egg_collector') {
+        assert.equal(plan.commands.filter(c => /^summon minecraft:chicken -?\d+\.5 \d+ -?\d+\.5$/.test(c)).length, 4);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:hopper'), 5);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
+      } else if (key === 'kelp_farm') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:kelp'), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:piston'), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:observer'), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 2);
+      } else if (key === 'fishing_spot') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 50);
+        assert.equal(dimension.getBlock(plan.seat).typeId, 'minecraft:air', 'room to stand on the seat');
+        assert.equal(dimension.getBlock({ ...plan.seat, y: plan.seat.y - 1 }).typeId, 'minecraft:hopper');
+      } else if (key === 'doorbell') {
+        assert.equal(dimension.getBlock(plan.button).typeId, 'minecraft:stone_button');
+      } else if (key === 'nether_portal') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:obsidian'), 14, 'a 4 × 5 frame with corners');
+        assert.equal(countBlocks(placed, v => v === 'minecraft:portal'), 6);
+        assert.ok(plan.commands.some(c => c.includes(`minecraft:portal ["portal_axis"="${alongX ? 'z' : 'x'}"]`)), 'portal plane runs across the facing direction');
+      } else if (key === 'secret_door') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:sticky_piston'), 2);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:lever'), 2);
+      } else if (key === 'trading_hall') {
+        assert.equal(plan.commands.filter(c => /^summon minecraft:villager_v2 -?\d+\.5 \d+ -?\d+\.5 minecraft:become_[a-z]+$/.test(c)).length, 4);
+        assert.equal(plan.jobs.join(), 'librarian,armorer,toolsmith,weaponsmith');
       } else if (key === 'railway') {
         assert.equal(countBlocks(placed, v => v === 'minecraft:golden_rail'), 3);
         assert.equal(countBlocks(placed, v => v === 'minecraft:rail'), 7);
@@ -1066,7 +1106,10 @@ test('every farm and smelter hopper routes items into an accessible container in
   for (const facing of FACINGS) {
     const { ctx, player, dimension } = harness();
     player.getViewDirection = () => facing;
-    const plans = [ctx.createSpawnerFarmPlan(player), ctx.createWoolFarmPlan(player), ctx.createSmelterPlan(player)];
+    const plans = [ctx.createSpawnerFarmPlan(player), ctx.createWoolFarmPlan(player), ctx.createSmelterPlan(player), ctx.createFishingSpotPlan(player)];
+    for (let n = 2; n <= 6; n++) plans.push(ctx.createFruitFarmPlan(player, n));
+    for (let n = 2; n <= 8; n++) plans.push(ctx.createEggCollectorPlan(player, n));
+    for (let n = 1; n <= 6; n++) plans.push(ctx.createKelpFarmPlan(player, n));
     for (let width = 2; width <= 8; width++) plans.push(ctx.createSugarCaneFarmPlan(player, width));
     for (let width = 3; width <= 9; width++) plans.push(ctx.createFloodFarmPlan(player, width));
     for (const plan of plans) {
@@ -1658,6 +1701,13 @@ test('no door, lamp, light or furniture placed by a build is overwritten later i
     for (const layout of ['village', 'city']) for (const furniture of [true, false]) {
       plans.push([`${layout} furniture=${furniture}`, ctx.createVillagePlan(player, 0, true, layout, furniture)]);
     }
+    for (const key of evaluate('CONTRAPTIONS.map(c => c.key)')) {
+      const contraption = evaluate('CONTRAPTIONS').find(c => c.key === key);
+      const values = {};
+      for (const field of contraption.fields) values[field.key] = field.type === 'toggle' ? true : (field.defaultValue ?? field.min ?? 0);
+      const plan = contraption.create(player, values);
+      if (plan) plans.push([`contraption ${key}`, plan]);
+    }
     for (const [name, plan] of plans) assert.deepEqual(overwrittenPlacements(ctx, plan.commands), [], name);
   }
 });
@@ -2048,4 +2098,146 @@ test('statues are listed from the generated block and each has a structure file'
     assert.equal(statue.size.length, 3);
     assert.ok(statue.size.every(n => Number.isInteger(n) && n >= 1 && n <= 64), statue.name);
   }
+});
+
+/** Redstone dust reachable from `start` (with power), following flat links and one-block steps. */
+function dustNetwork(dimension, starts) {
+  const key = p => `${p.x},${p.y},${p.z}`;
+  const isDust = p => dimension.getBlock(p).typeId === 'minecraft:redstone_wire';
+  const solid = p => !['minecraft:air', 'minecraft:water', 'minecraft:redstone_wire'].includes(dimension.getBlock(p).typeId);
+  const reached = new Map();
+  const queue = starts.map(p => [p, 15]);
+  while (queue.length) {
+    const [p, power] = queue.shift();
+    if (power <= 0 || !isDust(p) || (reached.get(key(p)) || 0) >= power) continue;
+    reached.set(key(p), power);
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const flat = { x: p.x + dx, y: p.y, z: p.z + dz };
+      queue.push([flat, power - 1]);
+      // Up a step needs air above this dust; down a step needs air above the lower dust.
+      if (!solid({ x: p.x, y: p.y + 1, z: p.z })) queue.push([{ ...flat, y: p.y + 1 }, power - 1]);
+      if (!solid(flat)) queue.push([{ ...flat, y: p.y - 1 }, power - 1]);
+    }
+  }
+  return reached;
+}
+
+test('fruit and kelp farm pistons are powered by their observers, and kelp spots refill with source water', () => {
+  const key = p => `${p.x},${p.y},${p.z}`;
+  for (const facing of FACINGS) {
+    for (let units = 2; units <= 6; units++) {
+      const { ctx, player, dimension } = harness();
+      player.getViewDirection = () => facing;
+      const plan = ctx.createFruitFarmPlan(player, units);
+      replayContraption(ctx, dimension, plan);
+      const at = (x, y, z) => ctx.localPoint(plan.context, x, y, z);
+      for (let u = 0; u < units; u++) {
+        const px = 1 + 2 * u, fx = 2 + 2 * u;
+        const observer = dimension.getBlock(at(fx, 2, 2));
+        assert.equal(observer.permutation.getState('minecraft:facing_direction'), 'down', 'observer watches the fruit spot');
+        assert.equal(dimension.getBlock(at(fx, 1, 2)).typeId, 'minecraft:air', 'room for the fruit');
+        assert.equal(dimension.getBlock(at(fx, 0, 2)).typeId, 'minecraft:dirt');
+        // The only free neighbour of the stem is the fruit spot.
+        for (const [x, z] of [[fx - 1, 3], [fx + 1, 3], [fx, 4]]) assert.notEqual(dimension.getBlock(at(x, 1, z)).typeId, 'minecraft:air', `stem side ${x},${z}`);
+        const network = dustNetwork(dimension, [at(fx, 3, 2)]);
+        assert.ok(network.has(key(at(px, 3, 2))), `units ${units}: dust above piston ${u} is powered`);
+        assert.equal(dimension.getBlock(at(px, 2, 2)).typeId, 'minecraft:smooth_stone', 'solid block between dust and piston');
+        const piston = dimension.getBlock(at(px, 1, 2)).permutation.getState('facing_direction');
+        const pushes = { 2: [0, 1], 3: [0, -1], 4: [1, 0], 5: [-1, 0] }[piston];
+        const towardFruit = [at(fx, 1, 2).x - at(px, 1, 2).x, at(fx, 1, 2).z - at(px, 1, 2).z];
+        assert.deepEqual(pushes, towardFruit, 'piston pushes the fruit');
+        assert.equal(dimension.getBlock(at(fx, 0, 4)).typeId, 'minecraft:water', 'farmland is watered');
+      }
+    }
+    for (let plants = 1; plants <= 6; plants++) {
+      const { ctx, player, dimension } = harness();
+      player.getViewDirection = () => facing;
+      const plan = ctx.createKelpFarmPlan(player, plants);
+      replayContraption(ctx, dimension, plan);
+      const at = (x, y, z) => ctx.localPoint(plan.context, x, y, z);
+      const middle = plants + 2;
+      assert.equal(dimension.getBlock(at(middle, 3, 2)).typeId, 'minecraft:water', 'stream source in the middle');
+      assert.ok(middle - 1 <= 7 && 2 * plants + 3 - middle <= 7, 'the stream reaches both hoppers');
+      for (let k = 0; k < plants; k++) {
+        const x = 3 + 2 * k;
+        assert.equal(dimension.getBlock(at(x, 1, 2)).typeId, 'minecraft:kelp');
+        assert.equal(dimension.getBlock(at(x, 0, 2)).typeId, 'minecraft:sand');
+        for (const side of [x - 1, x + 1]) {
+          assert.equal(dimension.getBlock(at(side, 2, 2)).typeId, 'minecraft:water', 'source water on both sides of the harvest spot');
+          assert.notEqual(dimension.getBlock(at(side, 2, 1)).typeId, 'minecraft:piston', 'neighbouring columns are never harvested');
+        }
+        const network = dustNetwork(dimension, [at(x, 3, 4)]);
+        assert.ok(network.has(key(at(x, 4, 1))), `plants ${plants}: dust reaches the block above piston ${k}`);
+        assert.equal(network.size, 4, 'each kelp column has its own circuit');
+        assert.equal(dimension.getBlock(at(x, 2, 4)).typeId, 'minecraft:smooth_stone', 'observer output block under the dust');
+      }
+    }
+  }
+});
+
+test('secret door levers power both pistons, and the pistons slide the wall across the doorway', () => {
+  for (const facing of FACINGS) {
+    const { ctx, player, dimension } = harness();
+    player.getViewDirection = () => facing;
+    const plan = ctx.createSecretDoorPlan(player, 1);
+    replayContraption(ctx, dimension, plan);
+    const at = (x, y, z) => ctx.localPoint(plan.context, x, y, z);
+    const adjacent = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.z - b.z) === 1;
+    for (const z of [0, 2]) {
+      const lever = dimension.getBlock(at(4, 1, z));
+      assert.equal(lever.typeId, 'minecraft:lever');
+      assert.match(lever.permutation.getState('lever_direction'), /^down_/, 'hangs from the block above');
+      assert.ok(adjacent(at(4, 1, z), at(4, 1, 1)), 'lever touches the lower piston');
+      assert.notEqual(dimension.getBlock(at(4, 2, z)).typeId, 'minecraft:air', 'lever hangs from a solid block');
+      assert.ok(adjacent(at(4, 2, z), at(4, 2, 1)), 'that block touches the upper piston');
+    }
+    for (const y of [1, 2]) {
+      assert.equal(dimension.getBlock(at(2, y, 1)).typeId, 'minecraft:air', 'starts open');
+      assert.equal(dimension.getBlock(at(3, y, 1)).typeId, 'minecraft:bookshelf', 'door block ready on the piston face');
+      const piston = dimension.getBlock(at(4, y, 1)).permutation.getState('facing_direction');
+      const pushes = { 2: [0, 1], 3: [0, -1], 4: [1, 0], 5: [-1, 0] }[piston];
+      assert.deepEqual(pushes, [at(3, y, 1).x - at(4, y, 1).x, at(3, y, 1).z - at(4, y, 1).z], 'pushes toward the doorway');
+    }
+  }
+});
+
+test('doorbells play their tune once per press and only for registered buttons', async () => {
+  const { ctx, dimension } = harness();
+  const props = {};
+  ctx.world.getDynamicProperty = k => props[k];
+  ctx.world.setDynamicProperty = (k, v) => { props[k] = v; };
+  const played = [];
+  const timeouts = [];
+  ctx.system.runTimeout = (fn, ticks) => timeouts.push({ fn, ticks });
+  dimension.playSound = (id, at, options) => played.push({ id, pitch: options.pitch });
+  ctx.addDoorbell('minecraft:overworld', { x: 1, y: 65, z: 2 }, 1);
+  const press = location => ctx.handleDoorbellPush({ block: { location, dimension } });
+  press({ x: 9, y: 65, z: 2 });
+  assert.equal(timeouts.length, 0, 'unregistered buttons are ignored');
+  press({ x: 1, y: 65, z: 2 });
+  press({ x: 1, y: 65, z: 2 });
+  const song = vm.runInContext('DOORBELL_SONGS[1]', ctx);
+  assert.equal(timeouts.length, song.notes.length + 1, 'a second press while ringing is ignored');
+  for (const t of timeouts.splice(0)) t.fn();
+  assert.equal(played.length, song.notes.length);
+  assert.ok(played.every(p => p.id === 'note.bell'));
+  assert.ok(Math.abs(ctx.notePitch(66) - 1) < 1e-9 && Math.abs(ctx.notePitch(78) - 2) < 1e-9, 'F♯ is pitch 1, an octave up is 2');
+  for (const s of vm.runInContext('DOORBELL_SONGS', ctx)) for (const [note] of s.notes) assert.ok(note >= 54 && note <= 78, 'within the note block range');
+  press({ x: 1, y: 65, z: 2 });
+  assert.ok(timeouts.length > 0, 'rings again once the tune has finished');
+});
+
+test('nether portals refuse the End, and trading halls can be all librarians or empty', () => {
+  const { ctx, player } = harness();
+  player.dimension = { id: 'minecraft:the_end' };
+  assert.equal(ctx.createNetherPortalPlan(player, 2, 3), null);
+  player.dimension = { id: 'minecraft:overworld' };
+  const plan = ctx.createNetherPortalPlan(player, 99, 1);
+  assert.equal(`${plan.width}x${plan.height}`, '6x3');
+  const hall = ctx.createTradingHallPlan(player, 3, 1, false);
+  assert.equal(hall.jobs.join(), 'librarian,librarian,librarian');
+  assert.ok(!hall.commands.some(c => c.startsWith('summon')));
+  const jobs = vm.runInContext('TRADING_JOBS', ctx);
+  assert.equal(jobs.length, 13);
+  assert.ok(jobs.some(j => j.event === 'minecraft:become_sheperd'), "Mojang's spelling of the shepherd event");
 });

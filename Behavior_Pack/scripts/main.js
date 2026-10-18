@@ -3990,6 +3990,354 @@ function createWaterSourcePlan(player) {
   return plan;
 }
 
+/**
+ * Pumpkin or melon farm. Each unit is a stem on watered farmland with its
+ * fruit spot on dirt in front, an observer above the fruit spot and a piston
+ * beside it. When fruit grows the observer powers the dust line along the
+ * top, every piston fires, and the broken fruit lands on the dirt. A hopper
+ * minecart under each dirt block picks it up (Bedrock carts collect items
+ * lying on the block above their rail) and hoppers carry it to a chest in a
+ * pit at the end.
+ */
+function createFruitFarmPlan(player, units, cropIndex = 0) {
+  units = clampNumber(Math.round(units), 2, 6);
+  const crop = FRUIT_FARM_CROPS[cropIndex] || FRUIT_FARM_CROPS[0];
+  const endX = 2 * units + 2;
+  const chestX = 2 * units + 1;
+  const c = createOrientedBuildContext(player, endX + 1, 6, -1);
+  const q = [];
+  const hopper = (dx, dz) => withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, dx, dz), toggle_bit: false });
+  q.push(fillLocal(c, 0, 1, 0, endX, 4, 5, "minecraft:air"));
+  q.push(fillLocal(c, 0, -2, 0, endX, 0, 5, CONTRAPTION_BASE));
+  // Collection: hoppers under the row run to a chest sunk in the front pit.
+  for (let x = 1; x <= 2 * units; x++) q.push(setLocal(c, x, -2, 2, hopper(1, 0)));
+  q.push(setLocal(c, chestX, -2, 2, hopper(0, -1)));
+  q.push(setLocal(c, chestX, -2, 1, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
+  q.push(fillLocal(c, chestX, -1, 1, chestX, 0, 1, "minecraft:air"));
+  // Water behind the stems keeps the farmland wet; it is covered so no fruit grows there.
+  q.push(fillLocal(c, 1, 0, 4, 2 * units, 0, 4, "minecraft:water"));
+  q.push(fillLocal(c, 0, 1, 4, endX, 1, 4, CONTRAPTION_BASE));
+  q.push(fillLocal(c, chestX, 1, 2, endX, 1, 3, CONTRAPTION_BASE));
+  const railDirection = c.forwardX !== 0 ? 1 : 0;
+  for (let u = 0; u < units; u++) {
+    const px = 1 + 2 * u, fx = 2 + 2 * u;
+    q.push(setLocal(c, px, 1, 3, CONTRAPTION_BASE));
+    q.push(setLocal(c, px, 1, 2, withBlockStates("minecraft:piston", { facing_direction: PISTON_FACING_CODES[worldDirectionKey(c, 1, 0)] })));
+    q.push(setLocal(c, px, 2, 2, CONTRAPTION_BASE));
+    q.push(setLocal(c, fx, -1, 2, withBlockStates("minecraft:rail", { rail_direction: railDirection })));
+    q.push(setLocal(c, fx, 0, 2, "minecraft:dirt"));
+    q.push(setLocal(c, fx, 0, 3, withBlockStates("minecraft:farmland", { moisturized_amount: 7 })));
+    q.push(setLocal(c, fx, 1, 3, crop.stem));
+    q.push(setLocal(c, fx, 2, 2, withBlockStates("minecraft:observer", { "minecraft:facing_direction": "down", powered_bit: false })));
+  }
+  q.push(fillLocal(c, 1, 3, 2, 2 * units, 3, 2, "minecraft:redstone_wire"));
+  q.push(setLocal(c, 0, 1, 1, "minecraft:lantern"));
+  q.push(setLocal(c, endX, 2, 2, "minecraft:lantern"));
+  for (let u = 0; u < units; u++) {
+    const cart = localPoint(c, 2 + 2 * u, -1, 2);
+    q.push(`summon minecraft:hopper_minecart ${cart.x + 0.5} ${cart.y} ${cart.z + 0.5}`);
+  }
+  const plan = makePlan(player, `${crop.label} farm`, c, q, localBounds(c, 0, -2, 0, endX, 4, 5));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  plan.units = units;
+  plan.crop = crop.label;
+  return plan;
+}
+
+/** Chickens in a glass run over hoppers; their eggs roll into a chest at the front. */
+function createEggCollectorPlan(player, chickens) {
+  chickens = clampNumber(Math.round(chickens), 2, 8);
+  const endX = chickens + 1;
+  const c = createOrientedBuildContext(player, endX + 1, 4, -1);
+  const q = [];
+  q.push(fillLocal(c, 0, 1, 0, endX, 3, 3, "minecraft:air"));
+  q.push(fillLocal(c, 0, -1, 0, endX, 0, 3, CONTRAPTION_BASE));
+  for (let x = 1; x < chickens; x++) q.push(setLocal(c, x, 0, 2, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 1, 0), toggle_bit: false })));
+  q.push(setLocal(c, chickens, 0, 2, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 0, -1), toggle_bit: false })));
+  q.push(setLocal(c, chickens, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 0, -1), toggle_bit: false })));
+  q.push(setLocal(c, chickens, 0, 0, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
+  q.push(fillLocal(c, 1, 1, 1, chickens, 2, 1, "minecraft:glass"));
+  q.push(fillLocal(c, 1, 1, 3, chickens, 2, 3, "minecraft:glass"));
+  q.push(fillLocal(c, 0, 1, 2, 0, 2, 2, "minecraft:glass"));
+  q.push(fillLocal(c, endX, 1, 2, endX, 2, 2, "minecraft:glass"));
+  q.push(setLocal(c, 0, 1, 0, "minecraft:lantern"));
+  q.push(setLocal(c, endX, 1, 0, "minecraft:lantern"));
+  for (let x = 1; x <= chickens; x++) {
+    const spot = localPoint(c, x, 1, 2);
+    q.push(`summon minecraft:chicken ${spot.x + 0.5} ${spot.y} ${spot.z + 0.5}`);
+  }
+  const plan = makePlan(player, "Egg Collector", c, q, localBounds(c, 0, -1, 0, endX, 3, 3));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  plan.chickens = chickens;
+  return plan;
+}
+
+/**
+ * Kelp farm. Kelp grows in water columns that alternate with plain water
+ * columns, so when a piston breaks the kelp's second block, the water it
+ * leaves behind has a source on each side and turns back into a source the
+ * kelp can grow into again. Each kelp column has its own observer, piston and
+ * dust (not shared, so neighbours never fire together). The broken kelp floats
+ * up into a stream that runs from the middle to hoppers and chests at both ends.
+ */
+function createKelpFarmPlan(player, plants) {
+  plants = clampNumber(Math.round(plants), 1, 6);
+  const first = 2, last = 2 * plants + 2;
+  const middle = plants + 2;
+  const endX = last + 2;
+  const c = createOrientedBuildContext(player, endX + 1, 5, -1);
+  const q = [];
+  q.push(fillLocal(c, 0, 1, 0, endX, 5, 4, "minecraft:air"));
+  q.push(fillLocal(c, 0, -1, 0, endX, 0, 4, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, 1, 1, endX, 3, 3, CONTRAPTION_BASE));
+  q.push(fillLocal(c, first - 1, 1, 2, last + 1, 3, 2, "minecraft:air"));
+  for (const [x, dx] of [[first - 1, -1], [last + 1, 1]]) {
+    q.push(setLocal(c, x, 2, 2, withBlockStates("minecraft:hopper", { facing_direction: FACING_DOWN, toggle_bit: false })));
+    q.push(setLocal(c, x, 1, 2, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, dx, 0), toggle_bit: false })));
+    q.push(setLocal(c, x + dx, 1, 2, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
+    q.push(setLocal(c, x + dx, 2, 2, "minecraft:air"));
+    q.push(setLocal(c, x + dx, 1, 1, "minecraft:air"));
+  }
+  q.push(fillLocal(c, first, 1, 2, last, 2, 2, "minecraft:water"));
+  for (let k = 0; k < plants; k++) {
+    const x = first + 1 + 2 * k;
+    q.push(setLocal(c, x, 0, 2, "minecraft:sand"));
+    q.push(setLocal(c, x, 1, 2, withBlockStates("minecraft:kelp", { kelp_age: 0 })));
+    q.push(setLocal(c, x, 2, 1, withBlockStates("minecraft:piston", { facing_direction: PISTON_FACING_CODES[worldDirectionKey(c, 0, 1)] })));
+    q.push(setLocal(c, x, 2, 3, withBlockStates("minecraft:observer", { "minecraft:facing_direction": facingName(c, 0, -1), powered_bit: false })));
+    q.push(setLocal(c, x, 2, 4, CONTRAPTION_BASE));
+    q.push(setLocal(c, x, 4, 2, CONTRAPTION_BASE));
+    q.push(setLocal(c, x, 3, 4, "minecraft:redstone_wire"));
+    q.push(setLocal(c, x, 4, 3, "minecraft:redstone_wire"));
+    q.push(setLocal(c, x, 5, 2, "minecraft:redstone_wire"));
+    q.push(setLocal(c, x, 4, 1, "minecraft:redstone_wire"));
+  }
+  q.push(setLocal(c, middle, 3, 2, "minecraft:water"));
+  q.push(setLocal(c, 0, 1, 0, "minecraft:lantern"));
+  q.push(setLocal(c, endX, 1, 0, "minecraft:lantern"));
+  const plan = makePlan(player, "Kelp Farm", c, q, localBounds(c, 0, -1, 0, endX, 5, 4));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  plan.plants = plants;
+  return plan;
+}
+
+/**
+ * Fishing spot: a covered seat on a hopper over a chest, facing a five by five
+ * pool. Catches go to your inventory; when it is full they drop into the
+ * hopper and on to the chest.
+ */
+function createFishingSpotPlan(player) {
+  const c = createOrientedBuildContext(player, 7, 8, -1);
+  const q = [];
+  q.push(fillLocal(c, 0, 1, 0, 6, 4, 7, "minecraft:air"));
+  q.push(fillLocal(c, 0, -2, 0, 6, 0, 7, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 1, -1, 3, 5, 0, 7, "minecraft:water"));
+  q.push(setLocal(c, 3, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 0, -1), toggle_bit: false })));
+  q.push(setLocal(c, 3, 0, 0, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
+  for (const x of [2, 4]) q.push(fillLocal(c, x, 1, 2, x, 3, 2, "minecraft:spruce_fence"));
+  q.push(fillLocal(c, 2, 4, 0, 4, 4, 2, "minecraft:spruce_planks"));
+  q.push(setLocal(c, 2, 3, 0, "minecraft:spruce_fence"));
+  q.push(setLocal(c, 4, 3, 0, "minecraft:spruce_fence"));
+  q.push(fillLocal(c, 2, 1, 0, 2, 2, 0, "minecraft:spruce_fence"));
+  q.push(fillLocal(c, 4, 1, 0, 4, 2, 0, "minecraft:spruce_fence"));
+  q.push(setLocal(c, 0, 1, 2, "minecraft:lantern"));
+  q.push(setLocal(c, 6, 1, 2, "minecraft:lantern"));
+  const plan = makePlan(player, "Fishing Spot", c, q, localBounds(c, 0, -2, 0, 6, 4, 7));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  plan.seat = localPoint(c, 3, 1, 1);
+  return plan;
+}
+
+/** A doorbell post: press the button and the add-on plays the chosen tune. */
+function createDoorbellPlan(player, songIndex = 0) {
+  const song = DOORBELL_SONGS[songIndex] || DOORBELL_SONGS[0];
+  const c = createOrientedBuildContext(player, 1, 2, -1);
+  const q = [];
+  q.push(fillLocal(c, 0, 1, 0, 0, 3, 1, "minecraft:air"));
+  q.push(fillLocal(c, 0, 0, 0, 0, 0, 1, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, 1, 1, 0, 2, 1, "minecraft:polished_andesite"));
+  q.push(setLocal(c, 0, 2, 0, withBlockStates("minecraft:stone_button", { facing_direction: facingCode(c, 0, -1), button_pressed_bit: false })));
+  q.push(setLocal(c, 0, 3, 1, "minecraft:lantern"));
+  const plan = makePlan(player, "Doorbell", c, q, localBounds(c, 0, 0, 0, 0, 3, 1));
+  plan.button = localPoint(c, 0, 2, 0);
+  plan.song = songIndex;
+  plan.songName = song.name;
+  return plan;
+}
+
+/** Obsidian frame with the portal already lit, standing in front of the player. */
+function createNetherPortalPlan(player, width, height) {
+  const dimension = String(player.dimension.id).replace(/^minecraft:/, "");
+  if (dimension === "the_end") return null;
+  width = clampNumber(Math.round(width), 2, 6);
+  height = clampNumber(Math.round(height), 3, 6);
+  const c = createOrientedBuildContext(player, width + 2, 3, -1);
+  const q = [];
+  const right = width + 1, top = height + 1;
+  q.push(fillLocal(c, 0, 1, 0, right, top + 1, 2, "minecraft:air"));
+  q.push(fillLocal(c, 0, 0, 0, right, 0, 2, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, 0, 1, right, top, 1, "minecraft:obsidian"));
+  q.push(fillLocal(c, 1, 1, 1, width, height, 1, withBlockStates("minecraft:portal", { portal_axis: c.rightX !== 0 ? "x" : "z" })));
+  const plan = makePlan(player, "Nether Portal", c, q, localBounds(c, 0, 0, 0, right, top + 1, 2));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  plan.width = width;
+  plan.height = height;
+  return plan;
+}
+
+/**
+ * Secret door: a three-thick wall with a 1 × 2 doorway. Two sticky pistons
+ * hidden in the middle of the wall slide two wall blocks across the doorway.
+ * A lever hangs in a small nook on each side: it powers the lower piston
+ * directly and the upper one through the block it hangs from.
+ */
+function createSecretDoorPlan(player, materialIndex = 0) {
+  const material = SECRET_DOOR_MATERIALS[materialIndex] || SECRET_DOOR_MATERIALS[0];
+  const c = createOrientedBuildContext(player, 7, 3, -1);
+  const q = [];
+  q.push(fillLocal(c, 0, 0, 0, 6, 0, 2, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, 1, 0, 6, 4, 2, material.id));
+  q.push(fillLocal(c, 2, 1, 0, 2, 2, 2, "minecraft:air"));
+  const piston = withBlockStates("minecraft:sticky_piston", { facing_direction: PISTON_FACING_CODES[worldDirectionKey(c, -1, 0)] });
+  q.push(setLocal(c, 4, 1, 1, piston));
+  q.push(setLocal(c, 4, 2, 1, piston));
+  const lever = withBlockStates("minecraft:lever", { lever_direction: c.rightX !== 0 ? "down_east_west" : "down_north_south", open_bit: false });
+  q.push(setLocal(c, 4, 1, 0, lever));
+  q.push(setLocal(c, 4, 1, 2, lever));
+  const plan = makePlan(player, "Secret Door", c, q, localBounds(c, 0, 0, 0, 6, 4, 2));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  plan.material = material.name;
+  return plan;
+}
+
+/**
+ * Villager trading hall: booths with a counter to trade over, the villager's
+ * workstation behind it and walls between booths. Optionally summons an adult
+ * villager with the matching job in each booth.
+ */
+function createTradingHallPlan(player, booths, jobMode = 0, summon = true) {
+  booths = clampNumber(Math.round(booths), 1, 8);
+  const endX = 2 * booths;
+  const c = createOrientedBuildContext(player, endX + 1, 4, -1);
+  const q = [];
+  q.push(fillLocal(c, 0, 1, 0, endX, 4, 3, "minecraft:air"));
+  q.push(fillLocal(c, 0, 0, 0, endX, 0, 3, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, 1, 0, endX, 3, 3, "minecraft:spruce_planks"));
+  const jobs = [];
+  for (let i = 0; i < booths; i++) {
+    const x = 1 + 2 * i;
+    const job = jobMode === 1 ? TRADING_JOBS[0] : TRADING_JOBS[i % TRADING_JOBS.length];
+    jobs.push(job);
+    q.push(fillLocal(c, x, 1, 1, x, 2, 1, "minecraft:air"));
+    q.push(setLocal(c, x, 2, 0, "minecraft:air"));
+    q.push(setLocal(c, x, 1, 2, job.block));
+    q.push(setLocal(c, x, 4, 0, "minecraft:lantern"));
+  }
+  if (summon) {
+    for (let i = 0; i < booths; i++) {
+      const spot = localPoint(c, 1 + 2 * i, 1, 1);
+      q.push(`summon minecraft:villager_v2 ${spot.x + 0.5} ${spot.y} ${spot.z + 0.5} ${jobs[i].event}`);
+    }
+  }
+  const plan = makePlan(player, "Trading Hall", c, q, localBounds(c, 0, 0, 0, endX, 4, 3));
+  plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  plan.booths = booths;
+  plan.jobs = jobs.map((j) => j.label);
+  return plan;
+}
+
+// ==========================================
+// 🔔 DOORBELL TUNES
+// ==========================================
+
+const DOORBELLS_KEY = "doorbells";
+const MAX_DOORBELLS = 64;
+const ringingDoorbells = new Set();
+
+function loadDoorbells() {
+  try {
+    const list = JSON.parse(world.getDynamicProperty(DOORBELLS_KEY) || "[]");
+    return Array.isArray(list) ? list : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function addDoorbell(dimensionId, location, songIndex) {
+  const list = loadDoorbells().filter((d) => !(d.dimensionId === dimensionId && d.x === location.x && d.y === location.y && d.z === location.z));
+  list.push({ dimensionId, x: location.x, y: location.y, z: location.z, song: songIndex });
+  while (list.length > MAX_DOORBELLS) list.shift();
+  try { world.setDynamicProperty(DOORBELLS_KEY, JSON.stringify(list)); } catch (e) {}
+}
+
+/** Note blocks play F♯3 at pitch 1; each semitone multiplies the pitch by 2^(1/12). */
+function notePitch(midiNote) {
+  return Math.pow(2, (midiNote - 66) / 12);
+}
+
+function playDoorbellSong(dimension, location, song) {
+  const key = `${dimension.id}:${location.x},${location.y},${location.z}`;
+  if (ringingDoorbells.has(key)) return;
+  ringingDoorbells.add(key);
+  const at = { x: location.x + 0.5, y: location.y + 0.5, z: location.z + 0.5 };
+  let ticks = 0;
+  for (const [note, length] of song.notes) {
+    system.runTimeout(() => {
+      try { dimension.playSound(song.sound, at, { pitch: notePitch(note), volume: 1.0 }); } catch (e) {}
+    }, Math.max(1, ticks));
+    ticks += length;
+  }
+  system.runTimeout(() => ringingDoorbells.delete(key), ticks + 1);
+}
+
+function handleDoorbellPush(event) {
+  const block = event.block;
+  if (!block) return;
+  const loc = block.location;
+  const bell = loadDoorbells().find((d) => d.dimensionId === block.dimension.id && d.x === loc.x && d.y === loc.y && d.z === loc.z);
+  if (bell) playDoorbellSong(block.dimension, loc, DOORBELL_SONGS[bell.song] || DOORBELL_SONGS[0]);
+}
+
+if (world.afterEvents.buttonPush) world.afterEvents.buttonPush.subscribe(handleDoorbellPush);
+
+const FRUIT_FARM_CROPS = [
+  { name: "Pumpkins 🎃", stem: "minecraft:pumpkin_stem", label: "Pumpkin" },
+  { name: "Melons 🍉", stem: "minecraft:melon_stem", label: "Melon" }
+];
+
+// MIDI note numbers (60 is middle C) and lengths in ticks.
+const DOORBELL_SONGS = [
+  { name: "Ding Dong 🔔", sound: "note.bell", notes: [[76, 12], [72, 20]] },
+  { name: "Westminster Chimes 🕰️", sound: "note.bell", notes: [[68, 8], [66, 8], [64, 8], [59, 16], [64, 8], [66, 8], [68, 8], [64, 16]] },
+  { name: "Twinkle Twinkle ⭐", sound: "note.harp", notes: [[60, 6], [60, 6], [67, 6], [67, 6], [69, 6], [69, 6], [67, 12], [65, 6], [65, 6], [64, 6], [64, 6], [62, 6], [62, 6], [60, 12]] },
+  { name: "Ode to Joy 🎶", sound: "note.flute", notes: [[64, 6], [64, 6], [65, 6], [67, 6], [67, 6], [65, 6], [64, 6], [62, 6], [60, 6], [60, 6], [62, 6], [64, 6], [64, 9], [62, 3], [62, 12]] }
+];
+
+const SECRET_DOOR_MATERIALS = [
+  { name: "Stone Bricks", id: "minecraft:stone_bricks" },
+  { name: "Bookshelves 📚", id: "minecraft:bookshelf" },
+  { name: "Oak Planks", id: "minecraft:oak_planks" },
+  { name: "Deepslate Bricks", id: "minecraft:deepslate_bricks" }
+];
+
+// Workstation and the villager_v2 event that gives the matching job.
+// ("sheperd" is Mojang's spelling of the shepherd event.)
+const TRADING_JOBS = [
+  { label: "librarian", block: withBlockStates("minecraft:lectern", { "minecraft:cardinal_direction": "north", powered_bit: false }), event: "minecraft:become_librarian" },
+  { label: "armorer", block: "minecraft:blast_furnace", event: "minecraft:become_armorer" },
+  { label: "toolsmith", block: "minecraft:smithing_table", event: "minecraft:become_toolsmith" },
+  { label: "weaponsmith", block: "minecraft:grindstone", event: "minecraft:become_weaponsmith" },
+  { label: "cleric", block: "minecraft:brewing_stand", event: "minecraft:become_cleric" },
+  { label: "farmer", block: "minecraft:composter", event: "minecraft:become_farmer" },
+  { label: "fletcher", block: "minecraft:fletching_table", event: "minecraft:become_fletcher" },
+  { label: "cartographer", block: "minecraft:cartography_table", event: "minecraft:become_cartographer" },
+  { label: "fisherman", block: "minecraft:barrel", event: "minecraft:become_fisherman" },
+  { label: "butcher", block: "minecraft:smoker", event: "minecraft:become_butcher" },
+  { label: "leatherworker", block: "minecraft:cauldron", event: "minecraft:become_leatherworker" },
+  { label: "mason", block: "minecraft:stonecutter_block", event: "minecraft:become_mason" },
+  { label: "shepherd", block: "minecraft:loom", event: "minecraft:become_sheperd" }
+];
+
 const SPAWNER_FARM_MOBS = [
   { name: "Zombies 🧟 (safest, drop rotten flesh and iron)", structure: "helpertools:zombie_spawner", label: "zombie" },
   { name: "Skeletons 💀 (bones and arrows; they shoot back)", structure: "helpertools:skeleton_spawner", label: "skeleton" }
@@ -4098,8 +4446,88 @@ const CONTRAPTIONS = [
     prompt: (plan) => `Build a ${plan.length}-block powered railway in front of you?`,
     success: (plan) => `🚂 ${plan.length}-block railway built! Place a minecart on the first rail, hop in and push forward.`,
     after: (player, v) => { if (v.cart && giveItemToPlayer(player, "minecraft:minecart", 1)) player.sendMessage("§a🛒 A minecart was added to your inventory.§r"); }
+  },
+  {
+    key: "fruit_farm", name: "🎃 Pumpkin & Melon Farm", description: "Observers and pistons harvest into a chest",
+    fields: [
+      { type: "dropdown", key: "crop", label: "Grow:", options: FRUIT_FARM_CROPS.map((c) => c.name) },
+      { type: "slider", key: "units", label: "Number of plants:", min: 2, max: 6, step: 1, defaultValue: 4 }
+    ],
+    create: (player, v) => createFruitFarmPlan(player, v.units, v.crop),
+    prompt: (plan) => `Build a ${plan.crop.toLowerCase()} farm with ${plan.units} plants here?\n\nThe chest is in the pit at the right-hand end.`,
+    success: (plan) => `🎃 ${plan.crop} farm built! Stems take a while to grow; the fruit is harvested into the chest in the pit by itself.`
+  },
+  {
+    key: "egg_collector", name: "🥚 Egg Collector", description: "Chickens over hoppers fill a chest with eggs",
+    fields: [{ type: "slider", key: "chickens", label: "Number of chickens:", min: 2, max: 8, step: 1, defaultValue: 4 }],
+    create: (player, v) => createEggCollectorPlan(player, v.chickens),
+    prompt: (plan) => `Build an egg collector with ${plan.chickens} chickens here?`,
+    success: (plan) => `🥚 Egg collector built with ${plan.chickens} chickens! Eggs roll into the chest at the front.`
+  },
+  {
+    key: "kelp_farm", name: "🌿 Kelp Farm", description: "Underwater kelp harvested into chests for food and fuel",
+    fields: [{ type: "slider", key: "plants", label: "Number of kelp plants:", min: 1, max: 6, step: 1, defaultValue: 4 }],
+    create: (player, v) => createKelpFarmPlan(player, v.plants),
+    prompt: (plan) => `Build a kelp farm with ${plan.plants} plants here?\n\nKelp is collected in the chests at both ends. Smelt it into dried kelp for food, or dried kelp blocks for fuel.`,
+    success: (plan) => `🌿 Kelp farm built with ${plan.plants} plants! Harvested kelp floats to the chests at both ends.`
+  },
+  {
+    key: "fishing_spot", name: "🎣 Fishing Spot", description: "Covered seat by a pool, with a chest for extra catches",
+    fields: [{ type: "toggle", key: "rod", label: "Give me an enchanted fishing rod", defaultValue: true }],
+    create: (player) => createFishingSpotPlan(player),
+    prompt: () => "Build a fishing spot here?\n\nStand on the seat, face the pool and fish. When your inventory is full, catches drop into the chest under the seat.",
+    success: () => "🎣 Fishing spot built! Stand on the seat and cast into the pool.",
+    after: (player, v) => { if (v.rod) giveFishingRod(player); }
+  },
+  {
+    key: "doorbell", name: "🔔 Doorbell", description: "Press the button to play a tune",
+    fields: [{ type: "dropdown", key: "song", label: "Tune:", options: DOORBELL_SONGS.map((s) => s.name) }],
+    create: (player, v) => createDoorbellPlan(player, v.song),
+    prompt: (plan) => `Build a doorbell that plays ${plan.songName} here?`,
+    success: (plan) => `🔔 Doorbell built! Press the button to hear ${plan.songName}.`,
+    after: (player, v, plan) => addDoorbell(plan.dimensionId, plan.button, plan.song)
+  },
+  {
+    key: "nether_portal", name: "🔥 Nether Portal", description: "Obsidian frame, already lit",
+    fields: [
+      { type: "slider", key: "width", label: "Inside width:", min: 2, max: 6, step: 1, defaultValue: 2 },
+      { type: "slider", key: "height", label: "Inside height:", min: 3, max: 6, step: 1, defaultValue: 3 }
+    ],
+    create: (player, v) => createNetherPortalPlan(player, v.width, v.height),
+    empty: "Nether portals only work in the Overworld and the Nether.",
+    prompt: (plan) => `Build a lit ${plan.width} × ${plan.height} Nether portal here?`,
+    success: () => "🔥 Nether portal built and lit! Step inside and wait a few seconds."
+  },
+  {
+    key: "secret_door", name: "🤫 Secret Door", description: "A wall section slides aside when you flip a lever",
+    fields: [{ type: "dropdown", key: "material", label: "Wall:", options: SECRET_DOOR_MATERIALS.map((m) => m.name) }],
+    create: (player, v) => createSecretDoorPlan(player, v.material),
+    prompt: (plan) => `Build a ${plan.material.toLowerCase()} wall with a secret door here?\n\nThere is a lever in a little nook on each side.`,
+    success: () => "🤫 Secret door built! It starts open. Flip the lever in the nook to close it, and flip it back to open it."
+  },
+  {
+    key: "trading_hall", name: "🏪 Villager Trading Hall", description: "Booths with workstations, and villagers if you like",
+    fields: [
+      { type: "slider", key: "booths", label: "Number of booths:", min: 1, max: 8, step: 1, defaultValue: 4 },
+      { type: "dropdown", key: "jobs", label: "Jobs:", options: ["A different job in each booth", "All librarians (for enchanted books)"] },
+      { type: "toggle", key: "summon", label: "Put a villager in each booth", defaultValue: true }
+    ],
+    create: (player, v) => createTradingHallPlan(player, v.booths, v.jobs, v.summon),
+    prompt: (plan) => `Build a trading hall with ${plan.booths} booth${plan.booths === 1 ? "" : "s"} here?\n\nJobs: ${plan.jobs.join(", ")}.`,
+    success: (plan) => `🏪 Trading hall built! Trade through the window above each counter. Jobs: ${plan.jobs.join(", ")}.`
   }
 ];
+
+function giveFishingRod(player) {
+  try {
+    const rod = new ItemStack("minecraft:fishing_rod", 1);
+    applyEnchantments(rod, [["lure", 3], ["luck_of_the_sea", 3], ["unbreaking", 3], ["mending", 1]]);
+    const result = equipOrGive(player, rod);
+    player.sendMessage(result === "dropped" ? "§e🎣 Your inventory is full, so the fishing rod was dropped at your feet.§r" : "§a🎣 An enchanted fishing rod was added to your inventory.§r");
+  } catch (e) {
+    player.sendMessage(`§eCould not give a fishing rod: ${e}§r`);
+  }
+}
 
 function openContraptionMenu(player) {
   const form = new ActionFormData()
