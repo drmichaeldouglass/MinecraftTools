@@ -2,6 +2,19 @@
 
 Release notes for the Helper Tools add-on, newest first. Each release bumps both pack manifests so Minecraft recognises the update.
 
+## Version 1.4.2 fixes
+
+- Doors now use the `minecraft:cardinal_direction` block state. Bedrock replaced the old integer `direction` state on doors in 1.21.60, and this pack requires 1.26.40, so every door command was being rejected. That stopped every house design, starter template, the village, the city, the automatic door and the bubble elevator part-way through the build. Each door keeps the orientation the old state gave it.
+- Pistons in the sugar cane and bamboo farm now push towards the crop. Bedrock swaps the horizontal `facing_direction` values for pistons (2 is south, 3 is north, 4 is east, 5 is west), so the pistons were facing away from the cane and never harvested it.
+- The cobblestone generator lets its water fall into a small pit beside the source. Before, the water flowed onto the lava source and turned it into obsidian, so no cobblestone ever formed.
+- The tree house stairs no longer clear away the lower half of the front door. The stairs now climb to a threshold under the door.
+- Staircases from the Bridge & Stair Builder, and the bunker entrance, now clear three blocks of headroom. With two blocks, a block was left at head height in front of every step, so the stairs could not be walked in solid ground.
+- Blocks that a later part of the same build overwrote are back: the A-frame cabin's porch lanterns, the lanterns beside every city tower entrance, the restaurant's dining room lights and one of its lamps. The mall no longer has a stall counter under its escalator.
+- If the undo snapshot cannot be saved, the build now says that nothing was built. It no longer tells you to use Undo, which would have undone your previous build.
+- Both manifests and all three rebuilt installers are version 1.4.2.
+
+Validation: all 63 mocked Script API regression tests pass. The seven new tests and two updated ones fail against the 1.4.1 script. A new check replays every house, template, village and city build and fails if a later command overwrites a door, lamp, light or furniture block. Minecraft is not available in this environment, so check these in a disposable Minecraft world: doors (including the iron door and elevator doors) are placed and face the right way, the cane farm pistons fire into the cane, the cobblestone generator makes cobblestone, and the stairs can be walked up and down.
+
 ## Version 1.4.1 fixes
 
 - Fixed enchanting passing identifier strings where the Script API requires `EnchantmentType` objects. Held-item enchanting and enchanted armour/tool kits now resolve types through `EnchantmentTypes.get`, retain level caps and reject unavailable enchantments.
