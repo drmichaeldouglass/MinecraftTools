@@ -1,4 +1,4 @@
-import { world, system, ItemStack, BiomeTypes, EnchantmentTypes } from "@minecraft/server";
+import { world, system, ItemStack, BiomeTypes, BlockVolume, EnchantmentTypes } from "@minecraft/server";
 import { ActionFormData, ModalFormData, MessageFormData } from "@minecraft/server-ui";
 
 const ITEM_ID = "tools:helper_device";
@@ -379,6 +379,7 @@ function openMainMenu(player) {
     .button("📍 Spawn & Teleport\n§7Spawn, Friends, Biomes, and Structures", "textures/items/compass_item")
     .button("🐾 Pets & Companions\n§7Spawn Dog, Cat, Horse, Golem", "textures/items/bone")
     .button("✨ Enchant & Armour\n§7Enchant items, armour and tool kits, trims", "textures/items/book_enchanted")
+    .button("🧰 Handy Helpers\n§7Ore detector, spawn spots, mining powers", "textures/items/iron_pickaxe")
     .button("🎁 Get Extra Helper Device\n§7Give another wand to inventory", "textures/items/helper_device");
 
   form.show(player).then((response) => {
@@ -407,6 +408,9 @@ function openMainMenu(player) {
         openEnchantMenu(player);
         break;
       case 7:
+        openHandyHelpersMenu(player);
+        break;
+      case 8:
         giveExtraDevice(player);
         break;
     }
@@ -743,6 +747,8 @@ function openBuilderToolsMenu(player) {
     .button("🌉 Bridge & Stair Builder\n§7Build safe paths in the direction you face", "textures/blocks/planks_oak")
     .button("💡 Light Up Area\n§7Place torches on dark surfaces around you", "textures/blocks/torch_on")
     .button("🧹 Area Cleanup\n§7Remove selected clutter around you", "textures/items/bucket_empty")
+    .button("📋 Copy & Paste\n§7Copy a build and place it somewhere else", "textures/items/paper")
+    .button("🗿 Place a Statue\n§7Statues and pixel art made from models or pictures", "textures/items/armor_stand")
     .button("↩️ Undo Last Build/Hole\n§7Revert your last building action", "textures/ui/refresh")
     .button("⬅️ Back to Main Menu\n§7Return to categories", "textures/ui/arrow_left");
 
@@ -792,9 +798,15 @@ function openBuilderToolsMenu(player) {
         openAreaCleanupMenu(player);
         break;
       case 14:
-        executeUndo(player);
+        openCopyPasteMenu(player);
         break;
       case 15:
+        openStatueMenu(player);
+        break;
+      case 16:
+        executeUndo(player);
+        break;
+      case 17:
         openMainMenu(player);
         break;
     }
@@ -4395,6 +4407,8 @@ function openSpawnAndTeleportMenu(player) {
     .button("🌎 Find Nearest Biome\n§7Find a biome and teleport straight there", "textures/items/compass_item")
     .button("🏰 Find Nearest Structure\n§7Get the command that finds a structure", "textures/items/map_filled")
     .button("🧭 Teleport to Coordinates\n§7Type in X, Y and Z and warp there", "textures/items/paper")
+    .button("💀 Back to Where I Died\n§7Go and pick up your dropped items", "textures/items/totem")
+    .button("🗺️ Waypoints\n§7Save named places and travel back to them", "textures/items/map_filled")
     .button("⬅️ Back to Main Menu\n§7Return to categories", "textures/ui/arrow_left");
 
   form.show(player).then((response) => {
@@ -4419,6 +4433,12 @@ function openSpawnAndTeleportMenu(player) {
         openTeleportToCoordinatesForm(player);
         break;
       case 6:
+        returnToDeathSpot(player);
+        break;
+      case 7:
+        openWaypointsMenu(player);
+        break;
+      case 8:
         openMainMenu(player);
         break;
     }
@@ -4811,7 +4831,7 @@ function removeTravelArea(dimension, areaName) {
  * player moves. `getBlock` throws on unloaded chunks, which is exactly what a
  * far-away destination is, so a temporary ticking area does the loading.
  */
-async function teleportToCoordinates(player, coordinates) {
+async function teleportToCoordinates(player, coordinates, targetDimension) {
   const id = player.id;
   if (activeTravels.has(id)) {
     player.sendMessage("§ePlease wait for your current trip to finish.§r");
@@ -4822,7 +4842,10 @@ async function teleportToCoordinates(player, coordinates) {
     return;
   }
   activeTravels.add(id);
-  const dimension = player.dimension;
+  // Waypoints and death spots can be in another dimension; the trip is still
+  // abandoned if the player changes dimension while the destination loads.
+  const dimension = targetDimension || player.dimension;
+  const startDimensionId = player.dimension.id;
   const range = getBuildRangeForDimension(dimension.id);
   const x = clampNumber(Math.floor(coordinates.x), -WORLD_EDGE, WORLD_EDGE);
   const z = clampNumber(Math.floor(coordinates.z), -WORLD_EDGE, WORLD_EDGE);
@@ -4839,11 +4862,11 @@ async function teleportToCoordinates(player, coordinates) {
       areaCreated = true;
       for (let attempt = 0; attempt < 5 && !spot; attempt++) {
         await new Promise((resolve) => system.runTimeout(resolve, TRAVEL_LOAD_TICKS));
-        if (!isValidEntity(player) || player.dimension.id !== dimension.id) return;
+        if (!isValidEntity(player) || player.dimension.id !== startDimensionId) return;
         spot = findArrivalSpot(dimension, x, z, requestedY);
       }
     }
-    if (!isValidEntity(player) || player.dimension.id !== dimension.id) return;
+    if (!isValidEntity(player) || player.dimension.id !== startDimensionId) return;
     if (!spot) {
       player.sendMessage("§eNo safe landing was found. You stayed where you were; try nearby coordinates.§r");
       return;
@@ -5431,4 +5454,794 @@ function giveSaddleFallback(player) {
     const leftover = inventory && inventory.container ? inventory.container.addItem(saddle) : saddle;
     if (leftover) player.dimension.spawnItem(leftover, player.location);
   } catch (e) {}
+}
+
+// ==========================================
+// 💀 DEATH SPOT & 🗺️ WAYPOINTS
+// ==========================================
+
+const LAST_DEATH_KEY = "last_death";
+const WAYPOINTS_KEY = "waypoints";
+const MAX_WAYPOINTS = 20;
+const WAYPOINT_NAME_LENGTH = 24;
+
+const DIMENSION_LABELS = { overworld: "Overworld", nether: "Nether", the_end: "The End" };
+
+function dimensionLabel(dimensionId) {
+  const name = String(dimensionId).replace(/^minecraft:/, "");
+  return DIMENSION_LABELS[name] || name;
+}
+
+/** Reads a JSON value saved on the player, or `fallback` when it is missing or damaged. */
+function readPlayerJson(player, key, fallback) {
+  try {
+    const raw = player.getDynamicProperty(key);
+    return raw === undefined ? fallback : JSON.parse(raw);
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function savePlayerJson(player, key, value) {
+  player.setDynamicProperty(key, value === undefined ? undefined : JSON.stringify(value));
+}
+
+function rememberDeathSpot(event) {
+  const entity = event.deadEntity;
+  if (!entity || entity.typeId !== "minecraft:player") return;
+  try {
+    const loc = entity.location;
+    savePlayerJson(entity, LAST_DEATH_KEY, {
+      x: Math.floor(loc.x), y: Math.floor(loc.y), z: Math.floor(loc.z), dimensionId: entity.dimension.id
+    });
+  } catch (e) {}
+}
+
+if (world.afterEvents.entityDie) world.afterEvents.entityDie.subscribe(rememberDeathSpot);
+
+/** Takes the player back to where they last died, landing on the nearest safe ground. */
+function returnToDeathSpot(player) {
+  const spot = readPlayerJson(player, LAST_DEATH_KEY, null);
+  if (!spot || !Number.isFinite(spot.x) || !Number.isFinite(spot.z)) {
+    player.sendMessage("§eNo death spot is saved yet. Stay safe out there!§r");
+    return;
+  }
+  player.sendMessage(`§e💀 Going back to where you died in the ${dimensionLabel(spot.dimensionId)}. Dropped items vanish after 5 minutes, so be quick!§r`);
+  return teleportToCoordinates(player, spot, getDimensionById(spot.dimensionId));
+}
+
+function loadWaypoints(player) {
+  const list = readPlayerJson(player, WAYPOINTS_KEY, []);
+  return Array.isArray(list) ? list.filter((w) => w && typeof w.name === "string" && Number.isFinite(w.x) && Number.isFinite(w.z)) : [];
+}
+
+function cleanWaypointName(text) {
+  return String(text || "").replace(/§./g, "").replace(/[§\n\r]/g, " ").trim().slice(0, WAYPOINT_NAME_LENGTH);
+}
+
+/** Saves the player's current spot under `name`, replacing a waypoint with the same name. */
+function saveWaypoint(player, name) {
+  name = cleanWaypointName(name);
+  if (!name) {
+    player.sendMessage("§ePlease give the waypoint a name.§r");
+    return false;
+  }
+  const list = loadWaypoints(player).filter((w) => w.name.toLowerCase() !== name.toLowerCase());
+  if (list.length >= MAX_WAYPOINTS) {
+    player.sendMessage(`§eYou already have ${MAX_WAYPOINTS} waypoints. Delete one first.§r`);
+    return false;
+  }
+  const loc = player.location;
+  list.push({ name, x: Math.floor(loc.x), y: Math.floor(loc.y), z: Math.floor(loc.z), dimensionId: player.dimension.id });
+  list.sort((a, b) => a.name.localeCompare(b.name));
+  savePlayerJson(player, WAYPOINTS_KEY, list);
+  player.sendMessage(`§a🗺️ Waypoint "${name}" saved at ${Math.floor(loc.x)}, ${Math.floor(loc.y)}, ${Math.floor(loc.z)} in the ${dimensionLabel(player.dimension.id)}.§r`);
+  player.playSound("random.orb", { volume: 0.8, pitch: 1.2 });
+  return true;
+}
+
+function deleteWaypoint(player, name) {
+  const list = loadWaypoints(player);
+  const kept = list.filter((w) => w.name !== name);
+  savePlayerJson(player, WAYPOINTS_KEY, kept.length ? kept : undefined);
+  player.sendMessage(kept.length < list.length ? `§a🗑️ Waypoint "${name}" deleted.§r` : `§eWaypoint "${name}" was not found.§r`);
+}
+
+function travelToWaypoint(player, waypoint) {
+  player.sendMessage(`§e🗺️ Travelling to "${waypoint.name}"...§r`);
+  return teleportToCoordinates(player, waypoint, getDimensionById(waypoint.dimensionId));
+}
+
+function openWaypointsMenu(player) {
+  const list = loadWaypoints(player);
+  const form = new ActionFormData()
+    .title("🗺️ Waypoints")
+    .body(list.length ? "Tap a waypoint to travel there, or save this spot." : "Save places you want to come back to, like your home, your mine or a village.")
+    .button("➕ Save This Spot\n§7Name the place you are standing", "textures/items/map_empty");
+  for (const w of list) {
+    form.button(`📌 ${w.name}\n§7${dimensionLabel(w.dimensionId)} ${w.x}, ${w.y}, ${w.z}`, "textures/items/compass_item");
+  }
+  if (list.length) form.button("🗑️ Delete a Waypoint\n§7Remove one you no longer need", "textures/ui/trash_default");
+  form.button("⬅️ Back\n§7Return to Spawn & Teleport", "textures/ui/arrow_left");
+
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const choice = response.selection;
+    if (choice === 0) return openSaveWaypointForm(player, list.length);
+    if (choice <= list.length) return travelToWaypoint(player, list[choice - 1]);
+    if (list.length && choice === list.length + 1) return openDeleteWaypointMenu(player, list);
+    openSpawnAndTeleportMenu(player);
+  }).catch((e) => console.error("Waypoints menu error: " + e));
+}
+
+function openSaveWaypointForm(player, count) {
+  const form = new ModalFormData()
+    .title("➕ Save This Spot")
+    .textField("Waypoint name:", "Home, Mine, Village...", { defaultValue: count === 0 ? "Home" : `Place ${count + 1}` });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    saveWaypoint(player, response.formValues[0]);
+  }).catch((e) => console.error("Save waypoint error: " + e));
+}
+
+function openDeleteWaypointMenu(player, list) {
+  const form = new ActionFormData().title("🗑️ Delete a Waypoint").body("Which waypoint should be removed?");
+  for (const w of list) form.button(`🗑️ ${w.name}\n§7${dimensionLabel(w.dimensionId)} ${w.x}, ${w.y}, ${w.z}`);
+  form.button("⬅️ Back\n§7Keep them all", "textures/ui/arrow_left");
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    if (response.selection < list.length) deleteWaypoint(player, list[response.selection].name);
+    else openWaypointsMenu(player);
+  }).catch((e) => console.error("Delete waypoint error: " + e));
+}
+
+// ==========================================
+// 🧰 HANDY HELPERS
+// ==========================================
+
+function openHandyHelpersMenu(player) {
+  const form = new ActionFormData()
+    .title("🧰 Handy Helpers")
+    .body("Tools for exploring, mining and farming:")
+    .button("💎 Ore Detector\n§7Count nearby ores and point to the closest", "textures/items/diamond")
+    .button("👻 Show Monster Spawn Spots\n§7Mark dark places where monsters can appear", "textures/items/rotten_flesh")
+    .button("🧭 Coordinates & Chunk Borders\n§7Show where you are in the world", "textures/items/compass_item")
+    .button("⛏️ Mining & Farming Powers\n§7Tree feller, vein miner, auto-replant", "textures/items/iron_axe")
+    .button("⬅️ Back to Main Menu\n§7Return to categories", "textures/ui/arrow_left");
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    switch (response.selection) {
+      case 0: openOreDetectorMenu(player); break;
+      case 1: showMonsterSpawnSpots(player); break;
+      case 2: openMapDisplayMenu(player); break;
+      case 3: openPowersMenu(player); break;
+      case 4: openMainMenu(player); break;
+    }
+  }).catch((e) => console.error("Handy helpers menu error: " + e));
+}
+
+// Particle effects shown for a while near one player, keyed by player and
+// kind, so pressing a button again replaces the old display.
+const helperDisplays = new Map();
+
+function startHelperDisplay(player, kind, durationTicks, intervalTicks, draw) {
+  const key = `${player.id}:${kind}`;
+  const previous = helperDisplays.get(key);
+  if (previous !== undefined) system.clearRun(previous);
+  const dimensionId = player.dimension.id;
+  let elapsed = 0;
+  const id = system.runInterval(() => {
+    elapsed += intervalTicks;
+    if (elapsed > durationTicks || !isValidEntity(player) || player.dimension.id !== dimensionId) {
+      system.clearRun(id);
+      if (helperDisplays.get(key) === id) helperDisplays.delete(key);
+      return;
+    }
+    try { draw(player.dimension); } catch (e) {}
+  }, intervalTicks);
+  helperDisplays.set(key, id);
+  return id;
+}
+
+/** "4 east, 9 down, 2 north" for the offset from the player to a block. */
+function describeOffset(dx, dy, dz) {
+  const parts = [];
+  if (dx) parts.push(`${Math.abs(dx)} ${dx > 0 ? "east" : "west"}`);
+  if (dy) parts.push(`${Math.abs(dy)} ${dy > 0 ? "up" : "down"}`);
+  if (dz) parts.push(`${Math.abs(dz)} ${dz > 0 ? "south" : "north"}`);
+  return parts.length ? parts.join(", ") : "right here";
+}
+
+function blockPosition(location) {
+  return { x: Math.floor(location.x), y: Math.floor(location.y), z: Math.floor(location.z) };
+}
+
+// --- 💎 Ore detector ---
+
+const ORE_GROUPS = [
+  { name: "💎 Diamonds", label: "diamond ore", blocks: ["minecraft:diamond_ore", "minecraft:deepslate_diamond_ore"] },
+  { name: "🟫 Ancient Debris (Nether)", label: "ancient debris", blocks: ["minecraft:ancient_debris"] },
+  { name: "💚 Emeralds", label: "emerald ore", blocks: ["minecraft:emerald_ore", "minecraft:deepslate_emerald_ore"] },
+  { name: "🟨 Gold", label: "gold ore", blocks: ["minecraft:gold_ore", "minecraft:deepslate_gold_ore", "minecraft:nether_gold_ore"] },
+  { name: "⬜ Iron", label: "iron ore", blocks: ["minecraft:iron_ore", "minecraft:deepslate_iron_ore"] },
+  { name: "🔴 Redstone", label: "redstone ore", blocks: ["minecraft:redstone_ore", "minecraft:lit_redstone_ore", "minecraft:deepslate_redstone_ore", "minecraft:lit_deepslate_redstone_ore"] },
+  { name: "🔵 Lapis Lazuli", label: "lapis ore", blocks: ["minecraft:lapis_ore", "minecraft:deepslate_lapis_ore"] },
+  { name: "🟠 Copper", label: "copper ore", blocks: ["minecraft:copper_ore", "minecraft:deepslate_copper_ore"] },
+  { name: "⚫ Coal", label: "coal ore", blocks: ["minecraft:coal_ore", "minecraft:deepslate_coal_ore"] },
+  { name: "⚪ Nether Quartz", label: "quartz ore", blocks: ["minecraft:quartz_ore"] }
+];
+const ORE_SCAN_MAX_RADIUS = 32;
+const ORE_SCAN_LAYERS_PER_TICK = 8;
+
+function openOreDetectorMenu(player) {
+  const form = new ModalFormData()
+    .title("💎 Ore Detector")
+    .dropdown("Look for:", ORE_GROUPS.map((g) => g.name), { defaultValueIndex: 0 })
+    .slider("Search distance (blocks):", 8, ORE_SCAN_MAX_RADIUS, { valueStep: 4, defaultValue: 16 });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const [groupIndex, radius] = response.formValues;
+    scanForOres(player, ORE_GROUPS[groupIndex] || ORE_GROUPS[0], radius);
+  }).catch((e) => console.error("Ore detector menu error: " + e));
+}
+
+/** Every matching block in a cube around the player, scanned a few layers per tick. */
+async function findBlocksAround(player, typeIds, radius) {
+  const dimension = player.dimension;
+  const origin = blockPosition(player.location);
+  const range = getBuildRangeForDimension(dimension.id);
+  const y1 = Math.max(range.min, origin.y - radius);
+  const y2 = Math.min(range.max, origin.y + radius);
+  const found = [];
+  for (let y = y1; y <= y2; y += ORE_SCAN_LAYERS_PER_TICK) {
+    if (!isValidEntity(player) || player.dimension.id !== dimension.id) return null;
+    const volume = new BlockVolume(
+      { x: origin.x - radius, y, z: origin.z - radius },
+      { x: origin.x + radius, y: Math.min(y + ORE_SCAN_LAYERS_PER_TICK - 1, y2), z: origin.z + radius }
+    );
+    const blocks = dimension.getBlocks(volume, { includeTypes: typeIds }, true);
+    for (const loc of blocks.getBlockLocationIterator()) found.push({ x: loc.x, y: loc.y, z: loc.z });
+    await nextTick();
+  }
+  return { origin, found };
+}
+
+async function scanForOres(player, group, radius) {
+  radius = clampNumber(Math.round(radius), 4, ORE_SCAN_MAX_RADIUS);
+  player.sendMessage(`§e💎 Scanning for ${group.label} within ${radius} blocks...§r`);
+  let result;
+  try {
+    result = await findBlocksAround(player, group.blocks, radius);
+  } catch (e) {
+    if (isValidEntity(player)) player.sendMessage(`§cThe ore scan failed: ${e}§r`);
+    return;
+  }
+  if (!result || !isValidEntity(player)) return;
+  const { origin, found } = result;
+  if (!found.length) {
+    player.sendMessage(`§eNo ${group.label} within ${radius} blocks. Try somewhere else or search further.§r`);
+    player.playSound("note.bass", { volume: 0.8, pitch: 0.8 });
+    return;
+  }
+  const distance = (b) => Math.hypot(b.x - origin.x, b.y - origin.y, b.z - origin.z);
+  const nearest = found.reduce((best, b) => (distance(b) < distance(best) ? b : best));
+  player.sendMessage(`§a💎 Found ${found.length} ${group.label} block${found.length === 1 ? "" : "s"} within ${radius} blocks!§r`);
+  player.sendMessage(`§b➡️ Closest: ${Math.round(distance(nearest))} blocks away (${describeOffset(nearest.x - origin.x, nearest.y - origin.y, nearest.z - origin.z)}). Follow the green sparkles for 15 seconds.§r`);
+  player.playSound("random.orb", { volume: 0.9, pitch: 1.5 });
+  const target = { x: nearest.x + 0.5, y: nearest.y + 0.5, z: nearest.z + 0.5 };
+  startHelperDisplay(player, "ore_trail", 300, 10, (dimension) => {
+    const from = { x: player.location.x, y: player.location.y + 1.2, z: player.location.z };
+    const dx = target.x - from.x, dy = target.y - from.y, dz = target.z - from.z;
+    const length = Math.hypot(dx, dy, dz);
+    const steps = Math.min(12, Math.floor(length));
+    for (let i = 1; i <= steps; i++) {
+      dimension.spawnParticle("minecraft:villager_happy", { x: from.x + (dx / length) * i, y: from.y + (dy / length) * i, z: from.z + (dz / length) * i });
+    }
+  });
+}
+
+// --- 👻 Monster spawn spots ---
+
+const SPAWN_SCAN_RADIUS = 16;
+const SPAWN_SCAN_HEIGHT = 8;
+const SPAWN_SPOT_LIMIT = 400;
+// Floors monsters cannot spawn on: see-through, partial or special blocks.
+const NO_SPAWN_FLOOR = /glass|leaves|slab|stairs|fence|wall|carpet|pane|trapdoor|door|sign|torch|lantern|rail|button|pressure_plate|bed|chest|barrier|farmland|grass_path|magma|honey_block|slime|scaffolding|snow_layer|waterlily|campfire|sapling|ladder|hopper|redstone_wire|repeater|comparator|piston|observer|bell|lectern|anvil|enchanting_table|cake|candle|chain|skull|flower_pot|banner|web|portal|bedrock_invisible|bubble_column/;
+
+function canMonsterSpawnAt(dimension, x, y, z) {
+  const feet = dimension.getBlock({ x, y, z });
+  if (!feet || !feet.isAir) return false;
+  const head = dimension.getBlock({ x, y: y + 1, z });
+  if (!head || !head.isAir) return false;
+  const floor = dimension.getBlock({ x, y: y - 1, z });
+  if (!floor || floor.isAir || floor.isLiquid || NO_SPAWN_FLOOR.test(floor.typeId)) return false;
+  return feet.getLightLevel() === 0;
+}
+
+async function findMonsterSpawnSpots(player) {
+  const dimension = player.dimension;
+  const origin = blockPosition(player.location);
+  const range = getBuildRangeForDimension(dimension.id);
+  const spots = [];
+  for (let x = origin.x - SPAWN_SCAN_RADIUS; x <= origin.x + SPAWN_SCAN_RADIUS; x++) {
+    if (!isValidEntity(player) || player.dimension.id !== dimension.id) return null;
+    for (let z = origin.z - SPAWN_SCAN_RADIUS; z <= origin.z + SPAWN_SCAN_RADIUS; z++) {
+      for (let y = Math.max(range.min + 1, origin.y - SPAWN_SCAN_HEIGHT); y <= Math.min(range.max - 1, origin.y + SPAWN_SCAN_HEIGHT); y++) {
+        try {
+          if (canMonsterSpawnAt(dimension, x, y, z)) spots.push({ x, y, z });
+        } catch (e) {}
+        if (spots.length >= SPAWN_SPOT_LIMIT) return spots;
+      }
+    }
+    if ((x - origin.x) % 4 === 0) await nextTick();
+  }
+  return spots;
+}
+
+async function showMonsterSpawnSpots(player) {
+  player.sendMessage("§e👻 Looking for dark spots where monsters can spawn...§r");
+  let spots;
+  try {
+    spots = await findMonsterSpawnSpots(player);
+  } catch (e) {
+    if (isValidEntity(player)) player.sendMessage(`§cThe spawn spot scan failed: ${e}§r`);
+    return;
+  }
+  if (!spots || !isValidEntity(player)) return;
+  if (!spots.length) {
+    player.sendMessage(`§a✅ No pitch-dark spawn spots within ${SPAWN_SCAN_RADIUS} blocks. Open ground under the sky is not checked: light it up with torches or Light Up Area.§r`);
+    return;
+  }
+  const more = spots.length >= SPAWN_SPOT_LIMIT ? "+" : "";
+  player.sendMessage(`§c👻 ${spots.length}${more} dark spot${spots.length === 1 ? "" : "s"} marked with grey clouds for 30 seconds. Monsters can spawn there; place torches or lanterns to stop them.§r`);
+  startHelperDisplay(player, "spawn_spots", 600, 20, (dimension) => {
+    for (const s of spots) dimension.spawnParticle("minecraft:villager_angry", { x: s.x + 0.5, y: s.y + 0.3, z: s.z + 0.5 });
+  });
+}
+
+// --- 🧭 Coordinates & chunk borders ---
+
+function openMapDisplayMenu(player) {
+  const form = new ActionFormData()
+    .title("🧭 Coordinates & Chunk Borders")
+    .body("Coordinates appear in the top corner of the screen for everyone in the world. Chunk borders show the 16 × 16 chunk you are standing in.")
+    .button("🧭 Show Coordinates\n§7Turn on the on-screen position", "textures/items/compass_item")
+    .button("🙈 Hide Coordinates\n§7Turn off the on-screen position", "textures/items/compass_item")
+    .button("🟩 Show Chunk Borders\n§7Outline your chunk for 60 seconds", "textures/blocks/grass_side_carried")
+    .button("⬅️ Back\n§7Return to Handy Helpers", "textures/ui/arrow_left");
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    if (response.selection === 0 || response.selection === 1) return setCoordinatesShown(player, response.selection === 0);
+    if (response.selection === 2) return showChunkBorders(player);
+    openHandyHelpersMenu(player);
+  }).catch((e) => console.error("Map display menu error: " + e));
+}
+
+function setCoordinatesShown(player, shown) {
+  return runCommand(player.dimension, `gamerule showcoordinates ${shown}`).then(() => {
+    player.sendMessage(shown ? "§a🧭 Coordinates are now shown on screen.§r" : "§a🙈 Coordinates are now hidden.§r");
+  }).catch((e) => player.sendMessage(`§cCould not change the coordinates display: ${e}§r`));
+}
+
+function chunkBoundsAt(location, height = 3) {
+  const x1 = Math.floor(location.x / 16) * 16;
+  const z1 = Math.floor(location.z / 16) * 16;
+  const y = Math.floor(location.y);
+  return { x1, y1: y - 1, z1, x2: x1 + 15, y2: y - 1 + height, z2: z1 + 15 };
+}
+
+function showChunkBorders(player) {
+  const c = chunkBoundsAt(player.location);
+  player.sendMessage(`§a🟩 Showing chunk borders for 60 seconds. This chunk runs from X ${c.x1} to ${c.x2} and Z ${c.z1} to ${c.z2}.§r`);
+  startHelperDisplay(player, "chunk_borders", 1200, 10, (dimension) => {
+    drawBoxOutline(dimension, chunkBoundsAt(player.location), "minecraft:villager_happy", 1);
+  });
+}
+
+// --- ⛏️ Mining & farming powers ---
+
+const POWERS = [
+  { key: "power_tree_feller", label: "🪓 Tree Feller: chop one log with an axe and the whole tree falls" },
+  { key: "power_vein_miner", label: "⛏️ Vein Miner: mine one ore with a pickaxe and the whole vein breaks" },
+  { key: "power_auto_replant", label: "🌱 Auto-Replant: ripe crops you harvest are replanted from your seeds" }
+];
+const TREE_FELLER_LIMIT = 200;
+const VEIN_MINER_LIMIT = 64;
+const TREE_LOGS = new Set([
+  "minecraft:oak_log", "minecraft:spruce_log", "minecraft:birch_log", "minecraft:jungle_log",
+  "minecraft:acacia_log", "minecraft:dark_oak_log", "minecraft:mangrove_log", "minecraft:cherry_log",
+  "minecraft:pale_oak_log", "minecraft:crimson_stem", "minecraft:warped_stem"
+]);
+// Blocks that only grow on natural trees, so log cabins are never felled.
+const TREE_CROWNS = /_leaves(_flowered)?$|^minecraft:(nether_wart_block|warped_wart_block|shroomlight)$/;
+const REPLANT_CROPS = {
+  "minecraft:wheat": { state: "growth", ripe: 7, seed: "minecraft:wheat_seeds", soil: "minecraft:farmland" },
+  "minecraft:carrots": { state: "growth", ripe: 7, seed: "minecraft:carrot", soil: "minecraft:farmland" },
+  "minecraft:potatoes": { state: "growth", ripe: 7, seed: "minecraft:potato", soil: "minecraft:farmland" },
+  "minecraft:beetroot": { state: "growth", ripe: 7, seed: "minecraft:beetroot_seeds", soil: "minecraft:farmland" },
+  "minecraft:nether_wart": { state: "age", ripe: 3, seed: "minecraft:nether_wart", soil: "minecraft:soul_sand" }
+};
+
+function powerEnabled(player, key) {
+  try { return player.getDynamicProperty(key) === true; } catch (e) { return false; }
+}
+
+function openPowersMenu(player) {
+  const form = new ModalFormData().title("⛏️ Mining & Farming Powers");
+  for (const power of POWERS) form.toggle(power.label, { defaultValue: powerEnabled(player, power.key) });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    POWERS.forEach((power, i) => player.setDynamicProperty(power.key, Boolean(response.formValues[i])));
+    const on = POWERS.filter((p, i) => response.formValues[i]).length;
+    player.sendMessage(on
+      ? "§a⛏️ Powers saved. Sneak while breaking a block to break just that one.§r"
+      : "§a⛏️ All powers are off.§r");
+  }).catch((e) => console.error("Powers menu error: " + e));
+}
+
+function isCreative(player) {
+  try { return String(player.getGameMode()).toLowerCase() === "creative"; } catch (e) { return false; }
+}
+
+function heldItem(player) {
+  try { return player.getComponent("equippable").getEquipment("Mainhand"); } catch (e) { return undefined; }
+}
+
+/** Uses up durability on the held tool for blocks broken by a power, as if mined one by one. */
+function wearHeldTool(player, uses) {
+  if (uses <= 0 || isCreative(player)) return;
+  try {
+    const equippable = player.getComponent("equippable");
+    const item = equippable.getEquipment("Mainhand");
+    const durability = item && item.getComponent("durability");
+    if (!durability) return;
+    let unbreaking = 0;
+    try {
+      const enchantment = item.getComponent("enchantable").getEnchantment("unbreaking");
+      unbreaking = enchantment ? enchantment.level : 0;
+    } catch (e) {}
+    let damage = 0;
+    for (let i = 0; i < uses; i++) if (Math.random() < 1 / (unbreaking + 1)) damage++;
+    if (durability.damage + damage >= durability.maxDurability) {
+      equippable.setEquipment("Mainhand", undefined);
+      player.playSound("random.break", { volume: 1.0, pitch: 1.0 });
+    } else {
+      durability.damage += damage;
+      equippable.setEquipment("Mainhand", item);
+    }
+  } catch (e) {}
+}
+
+const NEIGHBOURS_26 = [];
+for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+  if (dx || dy || dz) NEIGHBOURS_26.push({ x: dx, y: dy, z: dz });
+}
+const NEIGHBOURS_6 = NEIGHBOURS_26.filter((d) => Math.abs(d.x) + Math.abs(d.y) + Math.abs(d.z) === 1);
+
+/**
+ * Connected blocks (touching on faces, edges or corners) that pass `matches`,
+ * starting next to `start`, up to `limit` blocks. `start` itself is excluded
+ * because the player has already broken it.
+ */
+function findConnectedBlocks(dimension, start, matches, limit) {
+  const key = (p) => `${p.x},${p.y},${p.z}`;
+  const seen = new Set([key(start)]);
+  const queue = [start];
+  const found = [];
+  while (queue.length && found.length < limit) {
+    const at = queue.shift();
+    for (const d of NEIGHBOURS_26) {
+      const p = { x: at.x + d.x, y: at.y + d.y, z: at.z + d.z };
+      const k = key(p);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      let block;
+      try { block = dimension.getBlock(p); } catch (e) { continue; }
+      if (!block || !matches(block)) continue;
+      found.push(p);
+      queue.push(p);
+      if (found.length >= limit) break;
+    }
+  }
+  return found;
+}
+
+function isNaturalCrown(block) {
+  if (!TREE_CROWNS.test(block.typeId)) return false;
+  // Leaves placed by a player are persistent and never decay.
+  try { return block.permutation.getState("persistent_bit") !== true; } catch (e) { return true; }
+}
+
+function touchesNaturalCrown(dimension, positions) {
+  for (const p of positions) {
+    for (const d of NEIGHBOURS_6) {
+      try {
+        const block = dimension.getBlock({ x: p.x + d.x, y: p.y + d.y, z: p.z + d.z });
+        if (block && isNaturalCrown(block)) return true;
+      } catch (e) {}
+    }
+  }
+  return false;
+}
+
+function breakBlocksWithDrops(dimension, positions) {
+  let broken = 0;
+  for (const p of positions) {
+    try {
+      dimension.runCommand(`setblock ${p.x} ${p.y} ${p.z} minecraft:air destroy`);
+      broken++;
+    } catch (e) {}
+  }
+  return broken;
+}
+
+function oreFamily(typeId) {
+  if (typeId === "minecraft:ancient_debris") return typeId;
+  if (!/_ore$/.test(typeId)) return null;
+  // Deepslate and glowing (lit) redstone ores belong to the same vein.
+  return typeId.replace(/^minecraft:(lit_)?(deepslate_)?/, "minecraft:");
+}
+
+function fellTree(player, dimension, start, logType) {
+  const logs = findConnectedBlocks(dimension, start, (b) => b.typeId === logType, TREE_FELLER_LIMIT);
+  if (!logs.length || !touchesNaturalCrown(dimension, [start, ...logs])) return 0;
+  const broken = breakBlocksWithDrops(dimension, logs);
+  wearHeldTool(player, broken);
+  return broken;
+}
+
+function mineVein(player, dimension, start, family) {
+  const ores = findConnectedBlocks(dimension, start, (b) => oreFamily(b.typeId) === family, VEIN_MINER_LIMIT);
+  const broken = breakBlocksWithDrops(dimension, ores);
+  wearHeldTool(player, broken);
+  return broken;
+}
+
+/** Takes one item of `typeId` from the player's inventory; false when they have none. */
+function takeOneItem(player, typeId) {
+  try {
+    const container = player.getComponent("inventory").container;
+    for (let i = 0; i < container.size; i++) {
+      const item = container.getItem(i);
+      if (!item || item.typeId !== typeId) continue;
+      if (item.amount > 1) {
+        item.amount -= 1;
+        container.setItem(i, item);
+      } else {
+        container.setItem(i);
+      }
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
+function replantCrop(player, dimension, location, cropId, crop) {
+  // Wait a moment so the dropped seeds can be picked up first.
+  system.runTimeout(() => {
+    try {
+      if (!isValidEntity(player)) return;
+      const spot = dimension.getBlock(location);
+      const soil = dimension.getBlock({ x: location.x, y: location.y - 1, z: location.z });
+      if (!spot || !spot.isAir || !soil || soil.typeId !== crop.soil) return;
+      if (!isCreative(player) && !takeOneItem(player, crop.seed)) return;
+      dimension.runCommand(`setblock ${location.x} ${location.y} ${location.z} ${withBlockStates(cropId, { [crop.state]: 0 })}`);
+    } catch (e) {}
+  }, 10);
+}
+
+function handlePowerBlockBreak(event) {
+  const player = event.player;
+  if (!isValidEntity(player) || player.isSneaking) return;
+  const permutation = event.brokenBlockPermutation;
+  const typeId = permutation && permutation.type && permutation.type.id;
+  if (!typeId) return;
+  const dimension = event.block.dimension;
+  const start = blockPosition(event.block.location);
+  const tool = heldItem(player);
+  const toolId = tool ? tool.typeId : "";
+  if (TREE_LOGS.has(typeId)) {
+    if (powerEnabled(player, "power_tree_feller") && /_axe$/.test(toolId)) fellTree(player, dimension, start, typeId);
+    return;
+  }
+  const family = oreFamily(typeId);
+  if (family) {
+    if (powerEnabled(player, "power_vein_miner") && /_pickaxe$/.test(toolId)) mineVein(player, dimension, start, family);
+    return;
+  }
+  const crop = REPLANT_CROPS[typeId];
+  if (crop && powerEnabled(player, "power_auto_replant")) {
+    let ripe = false;
+    try { ripe = permutation.getState(crop.state) === crop.ripe; } catch (e) {}
+    if (ripe) replantCrop(player, dimension, start, typeId, crop);
+  }
+}
+
+if (world.afterEvents.playerBreakBlock) world.afterEvents.playerBreakBlock.subscribe(handlePowerBlockBreak);
+
+// ==========================================
+// 📋 COPY & PASTE AND 🗿 STATUES
+// ==========================================
+
+const COPY_MAX_SIDE = 64;
+const COPY_MAX_HEIGHT = 128;
+const CLIPBOARD_KEY = "clipboard";
+const COPY_CORNER_KEYS = ["copy_corner_1", "copy_corner_2"];
+const STRUCTURE_ROTATIONS = [
+  { name: "As it was", id: "0_degrees", quarter: 0 },
+  { name: "Turned 90°", id: "90_degrees", quarter: 1 },
+  { name: "Turned 180°", id: "180_degrees", quarter: 2 },
+  { name: "Turned 270°", id: "270_degrees", quarter: 3 }
+];
+
+// @generated statues begin (tools/model_to_structure.py)
+const STATUES = [
+];
+// @generated statues end
+
+function getCopyStructureName(player) {
+  return `ht_copy_${String(player.id).replace(/[^a-zA-Z0-9_]/g, "_")}`;
+}
+
+function describeCorner(corner) {
+  return corner ? `${corner.x}, ${corner.y}, ${corner.z}` : "not marked";
+}
+
+function openCopyPasteMenu(player) {
+  const [c1, c2] = COPY_CORNER_KEYS.map((k) => readPlayerJson(player, k, null));
+  const clip = readPlayerJson(player, CLIPBOARD_KEY, null);
+  const form = new ActionFormData()
+    .title("📋 Copy & Paste")
+    .body(
+      "1. Stand on the ground at one corner of a build and mark corner 1.\n" +
+      "2. Walk to the opposite corner and mark corner 2.\n" +
+      "3. Copy, choosing how tall the copy should be.\n" +
+      "4. Stand somewhere else and paste. Undo Last Build takes a paste away.\n\n" +
+      `Corner 1: ${describeCorner(c1)}\nCorner 2: ${describeCorner(c2)}\n` +
+      `Copied: ${clip ? `${clip.size[0]} × ${clip.size[1]} × ${clip.size[2]} blocks` : "nothing yet"}`
+    )
+    .button("📍 Mark Corner 1\n§7The ground under your feet", "textures/items/flint")
+    .button("📍 Mark Corner 2\n§7The ground under your feet", "textures/items/flint")
+    .button("📋 Copy Between the Corners\n§7Save the build to paste later", "textures/items/paper")
+    .button("📥 Paste in Front of Me\n§7Place your copy, turned if you like", "textures/items/book_writable")
+    .button("⬅️ Back\n§7Return to Builder Tools", "textures/ui/arrow_left");
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    switch (response.selection) {
+      case 0: case 1: markCopyCorner(player, response.selection); break;
+      case 2: openCopyForm(player); break;
+      case 3: openPasteForm(player); break;
+      case 4: openBuilderToolsMenu(player); break;
+    }
+  }).catch((e) => console.error("Copy & paste menu error: " + e));
+}
+
+function markCopyCorner(player, index) {
+  const corner = blockPosition(player.location);
+  corner.y -= 1;
+  corner.dimensionId = player.dimension.id;
+  savePlayerJson(player, COPY_CORNER_KEYS[index], corner);
+  player.sendMessage(`§a📍 Corner ${index + 1} marked at ${describeCorner(corner)}.§r`);
+  player.playSound("random.orb", { volume: 0.8, pitch: 1.3 });
+}
+
+/** The box between the two corners, from the lower corner's ground up `height` blocks above the higher one. */
+function copyBoundsFromCorners(c1, c2, height) {
+  return {
+    x1: Math.min(c1.x, c2.x), y1: Math.min(c1.y, c2.y), z1: Math.min(c1.z, c2.z),
+    x2: Math.max(c1.x, c2.x), y2: Math.max(c1.y, c2.y) + height, z2: Math.max(c1.z, c2.z)
+  };
+}
+
+function boundsSize(bounds) {
+  return [bounds.x2 - bounds.x1 + 1, bounds.y2 - bounds.y1 + 1, bounds.z2 - bounds.z1 + 1];
+}
+
+function openCopyForm(player) {
+  const [c1, c2] = COPY_CORNER_KEYS.map((k) => readPlayerJson(player, k, null));
+  if (!c1 || !c2) {
+    player.sendMessage("§eMark both corners first.§r");
+    return;
+  }
+  if (c1.dimensionId !== player.dimension.id || c2.dimensionId !== player.dimension.id) {
+    player.sendMessage("§eBoth corners must be in the dimension you are standing in. Mark them again here.§r");
+    return;
+  }
+  const form = new ModalFormData()
+    .title("📋 Copy Between the Corners")
+    .slider("Height above the ground (blocks):", 1, 64, { valueStep: 1, defaultValue: 10 });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const bounds = copyBoundsFromCorners(c1, c2, Math.round(response.formValues[0]));
+    const [sx, sy, sz] = boundsSize(bounds);
+    if (sx > COPY_MAX_SIDE || sz > COPY_MAX_SIDE || sy > COPY_MAX_HEIGHT) {
+      player.sendMessage(`§eThat is ${sx} × ${sy} × ${sz} blocks. Copies can be up to ${COPY_MAX_SIDE} × ${COPY_MAX_HEIGHT} × ${COPY_MAX_SIDE}.§r`);
+      return;
+    }
+    if (!validateBuildBounds(player, bounds)) return;
+    startPreview(player, bounds, "minecraft:villager_happy", `Copy everything inside this ${sx} × ${sy} × ${sz} box?`, () => copyArea(player, bounds));
+  }).catch((e) => console.error("Copy form error: " + e));
+}
+
+function copyArea(player, bounds) {
+  const name = getCopyStructureName(player);
+  const { x1, y1, z1, x2, y2, z2 } = bounds;
+  return runCommand(player.dimension, `structure save ${name} ${x1} ${y1} ${z1} ${x2} ${y2} ${z2} false disk true`).then(() => {
+    const size = boundsSize(bounds);
+    savePlayerJson(player, CLIPBOARD_KEY, { structure: name, size });
+    player.sendMessage(`§a📋 Copied ${size[0]} × ${size[1]} × ${size[2]} blocks. Stand where you want it and choose Paste.§r`);
+    player.playSound("random.orb", { volume: 0.9, pitch: 1.5 });
+  }).catch((e) => player.sendMessage(`§cCould not copy that area: ${e}§r`));
+}
+
+/**
+ * Loads a saved structure in front of the player, turned by `rotationIndex`
+ * quarter turns, with its lowest layer on the ground under their feet.
+ */
+function createStructurePastePlan(player, title, structureName, size, rotationIndex = 0) {
+  const rotation = STRUCTURE_ROTATIONS[rotationIndex] || STRUCTURE_ROTATIONS[0];
+  const [sx, sy, sz] = size;
+  const turned = rotation.quarter % 2 === 1;
+  const wx = turned ? sz : sx;
+  const wz = turned ? sx : sz;
+  const px = Math.floor(player.location.x);
+  const pz = Math.floor(player.location.z);
+  const y = Math.floor(player.location.y) - 1;
+  const facing = getPlayerFacing(player);
+  let x1, z1;
+  if (facing === "SOUTH") { x1 = px - Math.floor((wx - 1) / 2); z1 = pz + 1; }
+  else if (facing === "NORTH") { x1 = px - Math.floor((wx - 1) / 2); z1 = pz - wz; }
+  else if (facing === "EAST") { x1 = px + 1; z1 = pz - Math.floor((wz - 1) / 2); }
+  else { x1 = px - wx; z1 = pz - Math.floor((wz - 1) / 2); }
+  return {
+    name: title,
+    dimensionId: player.dimension.id,
+    commands: [`structure load "${structureName}" ${x1} ${y} ${z1} ${rotation.id}`],
+    bounds: { x1, y1: y, z1, x2: x1 + wx - 1, y2: y + sy - 1, z2: z1 + wz - 1 }
+  };
+}
+
+function openStructurePlacementForm(player, title, choices, onPlan) {
+  const form = new ModalFormData().title(title);
+  if (choices) form.dropdown("Choose:", choices, { defaultValueIndex: 0 });
+  form.dropdown("Turn it:", STRUCTURE_ROTATIONS.map((r) => r.name), { defaultValueIndex: 0 });
+  form.toggle("✨ Show 3D Glowing Preview Guide First", { defaultValue: true });
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const values = response.formValues;
+    const offset = choices ? 1 : 0;
+    const { plan, prompt, success } = onPlan(choices ? values[0] : 0, values[offset]);
+    if (!validateBuildBounds(player, plan.bounds)) return;
+    const build = () => executeBuildPlan(player, plan, "paste", success, "random.levelup");
+    if (values[offset + 1]) startPreview(player, plan.bounds, "minecraft:villager_happy", prompt, build);
+    else build();
+  }).catch((e) => console.error(`${title} error: ` + e));
+}
+
+function openPasteForm(player) {
+  const clip = readPlayerJson(player, CLIPBOARD_KEY, null);
+  if (!clip || !Array.isArray(clip.size)) {
+    player.sendMessage("§eCopy something first.§r");
+    return;
+  }
+  openStructurePlacementForm(player, "📥 Paste in Front of Me", null, (unused, rotationIndex) => ({
+    plan: createStructurePastePlan(player, "Paste", clip.structure, clip.size, rotationIndex),
+    prompt: "Paste your copy here? Anything inside the box is replaced.",
+    success: "📥 Pasted! Use Undo Last Build if it is not quite right."
+  }));
+}
+
+function openStatueMenu(player) {
+  if (!STATUES.length) {
+    player.sendMessage("§eNo statues are installed yet. Make one from a 3D model or picture with tools/model_to_structure.py (see tools/README.md).§r");
+    return;
+  }
+  openStructurePlacementForm(player, "🗿 Place a Statue", STATUES.map((s) => `${s.name} (${s.size[0]} × ${s.size[1]} × ${s.size[2]})`), (index, rotationIndex) => {
+    const statue = STATUES[index] || STATUES[0];
+    return {
+      plan: createStructurePastePlan(player, statue.name, statue.structure, statue.size, rotationIndex),
+      prompt: `Place the ${statue.name} statue here?`,
+      success: `🗿 ${statue.name} placed! Use Undo Last Build to remove it.`
+    };
+  });
 }

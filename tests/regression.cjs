@@ -832,13 +832,13 @@ test('builder tools menu opens the right tool for every button', async () => {
   modalForm(ctx, titles, null);
   const expected = ['🕳️ Dig an Empty Hole', '🧱 Build / Fill Blocks', '🚜 Flatten / Level Ground', '🪜 Instant Underfoot Platform',
     '🏠 Starter Base Templates', '🏡 House Designs', '🏘️ Build a Village or City', '🔷 Shapes & Beacons', '🏊 Swimming Pool',
-    '🌊 Drain Water & Lava', '⚡ Redstone Contraptions', '🌉 Bridge & Stair Builder', null, '🧹 Area Cleanup', null, '✨ Helper Tools Device ✨'];
+    '🌊 Drain Water & Lava', '⚡ Redstone Contraptions', '🌉 Bridge & Stair Builder', null, '🧹 Area Cleanup', '📋 Copy & Paste', null, null, '✨ Helper Tools Device ✨'];
   for (let i = 0; i < expected.length; i++) {
     titles.length = 0; player.messages.length = 0; selection = i;
     ctx.openBuilderToolsMenu(player);
     await tick();
     if (expected[i]) assert.equal(titles[1], expected[i], `button ${i}`);
-    if (i === 14) assert.ok(player.messages.some(m => m.includes('Nothing to undo')), 'undo button');
+    if (i === 16) assert.ok(player.messages.some(m => m.includes('Nothing to undo')), 'undo button');
     if (i === 12) assert.ok(player.messages.some(m => m.includes('Lit up')), 'light up button');
   }
   assert.equal(buttons, expected.length);
@@ -1403,6 +1403,10 @@ test('main and superpowers menus reach the enchanting tools', async () => {
   titles.length = 0; selection = 7;
   ctx.openMainMenu(player);
   await tick();
+  assert.equal(titles[1], '🧰 Handy Helpers');
+  titles.length = 0; selection = 8;
+  ctx.openMainMenu(player);
+  await tick();
   assert.ok(player.messages.some(m => m.includes('extra device') || m.includes('Could not access your inventory')), player.messages.join('\n'));
   selection = 3;
   ctx.openSuperpowersMenu(player);
@@ -1755,4 +1759,293 @@ test('a failed snapshot does not tell the player to undo a previous build', asyn
   assert.equal(await ctx.executeBuildPlan(player, plan, 'simple_house', 'done'), false);
   assert.ok(player.messages.some(m => m.includes('nothing was built')));
   assert.ok(!player.messages.some(m => m.includes('Undo')));
+});
+
+function withPlayerProperties(player) {
+  const props = {};
+  player.getDynamicProperty = k => props[k];
+  player.setDynamicProperty = (k, v) => { if (v === undefined) delete props[k]; else props[k] = v; };
+  return props;
+}
+
+test('death spot is remembered and the trip back lands safely in the right dimension', async () => {
+  const { ctx, player, dimension } = harness();
+  withPlayerProperties(player);
+  solidColumn(dimension);
+  const nether = { id: 'minecraft:nether', runCommand: () => ({ successCount: 1 }) };
+  solidColumn(nether);
+  ctx.world.getDimension = id => (id.replace('minecraft:', '') === 'nether' ? nether : dimension);
+  ctx.returnToDeathSpot(player);
+  assert.ok(player.messages.some(m => m.includes('No death spot')), player.messages.join('\n'));
+  ctx.rememberDeathSpot({ deadEntity: { typeId: 'minecraft:zombie', location: { x: 1, y: 2, z: 3 }, dimension } });
+  assert.equal(player.getDynamicProperty('last_death'), undefined);
+  ctx.rememberDeathSpot({ deadEntity: Object.assign(player, { typeId: 'minecraft:player', location: { x: 40.7, y: 70.2, z: -12.3 }, dimension: nether }) });
+  assert.equal(player.getDynamicProperty('last_death'), JSON.stringify({ x: 40, y: 70, z: -13, dimensionId: 'minecraft:nether' }));
+  player.dimension = dimension;
+  await ctx.returnToDeathSpot(player);
+  assert.equal(player.teleports.length, 1);
+  assert.equal(player.teleports[0].options.dimension, nether, 'travels to the dimension where the player died');
+  assert.equal(player.teleports[0].loc.x, 40.5);
+  assert.equal(player.teleports[0].loc.z, -12.5);
+});
+
+test('waypoints are saved by name, replaced, listed, travelled to and deleted', async () => {
+  const { ctx, player, dimension } = harness();
+  const props = withPlayerProperties(player);
+  solidColumn(dimension);
+  player.location = { x: 10.5, y: 64, z: -5.5 };
+  assert.equal(ctx.saveWaypoint(player, '   '), false);
+  assert.ok(ctx.saveWaypoint(player, '§cHome\n'));
+  player.location = { x: 100, y: 70, z: 200 };
+  assert.ok(ctx.saveWaypoint(player, 'Mine'));
+  assert.ok(ctx.saveWaypoint(player, 'home'), 'the same name (any case) replaces the old waypoint');
+  let list = ctx.loadWaypoints(player);
+  assert.equal(list.map(w => w.name).join(), 'home,Mine');
+  assert.equal(list[0].x, 100);
+  for (let i = list.length; i < 20; i++) ctx.saveWaypoint(player, `Place ${i}`);
+  assert.equal(ctx.saveWaypoint(player, 'One too many'), false);
+  assert.ok(player.messages.some(m => m.includes('already have 20 waypoints')));
+  await ctx.travelToWaypoint(player, ctx.loadWaypoints(player).find(w => w.name === 'Mine'));
+  assert.equal(player.teleports.at(-1).loc.x, 100.5);
+  ctx.deleteWaypoint(player, 'Mine');
+  assert.ok(!ctx.loadWaypoints(player).some(w => w.name === 'Mine'));
+  props.waypoints = 'not json';
+  assert.deepEqual(Array.from(ctx.loadWaypoints(player)), [], 'damaged data is ignored');
+});
+
+/** A sparse world for helper tests: `set(x, y, z, typeId, states, light)`; everything else is air (light 15). */
+function sparseWorld(dimension) {
+  const blocks = new Map();
+  const key = p => `${p.x},${p.y},${p.z}`;
+  const set = (x, y, z, typeId, states = {}, light = 15) => blocks.set(key({ x, y, z }), { typeId, states, light });
+  const commands = [];
+  dimension.getBlock = p => {
+    const b = blocks.get(key(p)) || { typeId: 'minecraft:air', states: {}, light: 15 };
+    return {
+      typeId: b.typeId, isAir: b.typeId === 'minecraft:air', isLiquid: b.typeId === 'minecraft:water',
+      location: { ...p }, dimension, permutation: { getState: n => b.states[n] }, getLightLevel: () => b.light
+    };
+  };
+  dimension.getBlocks = (volume, filter) => {
+    const { from, to } = volume;
+    const hits = [];
+    for (const [k, b] of blocks) {
+      const [x, y, z] = k.split(',').map(Number);
+      if (x >= from.x && x <= to.x && y >= from.y && y <= to.y && z >= from.z && z <= to.z && filter.includeTypes.includes(b.typeId)) hits.push({ x, y, z });
+    }
+    return { getBlockLocationIterator: () => hits[Symbol.iterator]() };
+  };
+  dimension.runCommand = c => {
+    commands.push(c);
+    const m = c.match(/^setblock (-?\d+) (-?\d+) (-?\d+) minecraft:air destroy$/);
+    if (m) blocks.delete(`${m[1]},${m[2]},${m[3]}`);
+    return { successCount: 1 };
+  };
+  return { blocks, set, commands };
+}
+
+function useBlockVolume(ctx) {
+  ctx.BlockVolume = class { constructor(from, to) { this.from = from; this.to = to; } };
+}
+
+test('ore detector counts a whole ore group, reports the closest block and draws a trail', async () => {
+  const { ctx, player, dimension, tick, intervals } = harness();
+  useBlockVolume(ctx);
+  const world = sparseWorld(dimension);
+  world.set(3, 60, 0, 'minecraft:diamond_ore');
+  world.set(-10, 50, 10, 'minecraft:deepslate_diamond_ore');
+  world.set(1, 64, 1, 'minecraft:iron_ore');
+  world.set(40, 64, 0, 'minecraft:diamond_ore');
+  const particles = [];
+  dimension.spawnParticle = (name, loc) => particles.push({ name, loc });
+  const scan = ctx.scanForOres(player, vm.runInContext('ORE_GROUPS[0]', ctx), 16);
+  for (let i = 0; i < 10; i++) await tick();
+  await scan;
+  assert.ok(player.messages.some(m => m.includes('Found 2 diamond ore blocks within 16 blocks')), player.messages.join('\n'));
+  assert.ok(player.messages.some(m => m.includes('Closest: 5 blocks away (3 east, 4 down)')), player.messages.join('\n'));
+  assert.equal(intervals.size, 1);
+  [...intervals.values()][0]();
+  assert.ok(particles.length > 0 && particles.every(p => p.name === 'minecraft:villager_happy'));
+  player.messages.length = 0;
+  const none = ctx.scanForOres(player, vm.runInContext('ORE_GROUPS[1]', ctx), 8);
+  for (let i = 0; i < 10; i++) await tick();
+  await none;
+  assert.ok(player.messages.some(m => m.includes('No ancient debris within 8 blocks')), player.messages.join('\n'));
+});
+
+test('every ore and helper block name is a real Bedrock block', () => {
+  const { ctx } = harness();
+  const groups = vm.runInContext('ORE_GROUPS', ctx);
+  const names = [...groups.flatMap(g => Array.from(g.blocks)), ...vm.runInContext('[...TREE_LOGS]', ctx), ...Object.keys(vm.runInContext('REPLANT_CROPS', ctx))];
+  // Bedrock IDs checked against Mojang's block list; this guards against typos and Java names.
+  for (const name of names) assert.match(name, /^minecraft:[a-z_]+$/);
+  assert.ok(names.includes('minecraft:lit_deepslate_redstone_ore'));
+  assert.equal(ctx.oreFamily('minecraft:lit_deepslate_redstone_ore'), 'minecraft:redstone_ore');
+  assert.equal(ctx.oreFamily('minecraft:deepslate_iron_ore'), 'minecraft:iron_ore');
+  assert.equal(ctx.oreFamily('minecraft:nether_gold_ore'), 'minecraft:nether_gold_ore');
+  assert.equal(ctx.oreFamily('minecraft:ancient_debris'), 'minecraft:ancient_debris');
+  assert.equal(ctx.oreFamily('minecraft:stone'), null);
+});
+
+test('monster spawn spots need a dark, solid floor with two free blocks above', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  const world = sparseWorld(dimension);
+  world.set(2, 63, 2, 'minecraft:stone'); world.set(2, 64, 2, 'minecraft:air', {}, 0); world.set(2, 65, 2, 'minecraft:air', {}, 0);
+  world.set(3, 63, 2, 'minecraft:stone'); world.set(3, 64, 2, 'minecraft:air', {}, 7);
+  world.set(4, 63, 2, 'minecraft:glass'); world.set(4, 64, 2, 'minecraft:air', {}, 0);
+  world.set(5, 63, 2, 'minecraft:stone'); world.set(5, 64, 2, 'minecraft:air', {}, 0); world.set(5, 65, 2, 'minecraft:stone');
+  world.set(6, 63, 2, 'minecraft:oak_slab'); world.set(6, 64, 2, 'minecraft:air', {}, 0);
+  world.set(7, 63, 2, 'minecraft:water'); world.set(7, 64, 2, 'minecraft:air', {}, 0);
+  assert.equal(ctx.canMonsterSpawnAt(dimension, 2, 64, 2), true);
+  assert.equal(ctx.canMonsterSpawnAt(dimension, 3, 64, 2), false, 'lit');
+  assert.equal(ctx.canMonsterSpawnAt(dimension, 4, 64, 2), false, 'glass floor');
+  assert.equal(ctx.canMonsterSpawnAt(dimension, 5, 64, 2), false, 'no headroom');
+  assert.equal(ctx.canMonsterSpawnAt(dimension, 6, 64, 2), false, 'slab floor');
+  assert.equal(ctx.canMonsterSpawnAt(dimension, 7, 64, 2), false, 'water');
+  const found = ctx.showMonsterSpawnSpots(player);
+  for (let i = 0; i < 20; i++) await tick();
+  await found;
+  assert.ok(player.messages.some(m => m.includes('1 dark spot marked')), player.messages.join('\n'));
+});
+
+test('chunk borders follow 16-block chunks, including negative coordinates', () => {
+  const { ctx } = harness();
+  const b = ctx.chunkBoundsAt({ x: -0.5, y: 70.2, z: 31.9 });
+  assert.equal(`${b.x1},${b.x2},${b.z1},${b.z2},${b.y1},${b.y2}`, '-16,-1,16,31,69,72');
+});
+
+function powersPlayer(ctx, player, tool, powers = {}) {
+  withPlayerProperties(player);
+  for (const [k, v] of Object.entries(powers)) player.setDynamicProperty(k, v);
+  const held = tool && { typeId: tool, getComponent: () => undefined };
+  player.getComponent = name => name === 'equippable' ? { getEquipment: () => held, setEquipment() {} } : undefined;
+  player.getGameMode = () => 'Survival';
+  player.isSneaking = false;
+}
+
+function breakEvent(player, dimension, location, typeId, states = {}) {
+  return { player, block: { location, dimension }, brokenBlockPermutation: { type: { id: typeId }, getState: n => states[n] } };
+}
+
+test('tree feller fells natural trees with an axe but never log cabins, and sneaking breaks one log', () => {
+  const { ctx, player, dimension } = harness();
+  powersPlayer(ctx, player, 'minecraft:iron_axe', { power_tree_feller: true });
+  const world = sparseWorld(dimension);
+  for (let y = 65; y <= 69; y++) world.set(0, y, 0, 'minecraft:oak_log');
+  world.set(1, 68, 1, 'minecraft:oak_log');
+  world.set(0, 70, 0, 'minecraft:oak_leaves', { persistent_bit: false });
+  world.set(0, 68, 1, 'minecraft:birch_log');
+  player.isSneaking = true;
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 0, y: 64, z: 0 }, 'minecraft:oak_log'));
+  assert.equal(world.commands.length, 0, 'sneaking breaks one block');
+  player.isSneaking = false;
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 0, y: 64, z: 0 }, 'minecraft:oak_log'));
+  assert.equal(world.commands.length, 6, world.commands.join('\n'));
+  assert.ok(world.commands.every(c => c.endsWith('minecraft:air destroy')));
+  assert.equal(world.blocks.get('0,68,1').typeId, 'minecraft:birch_log', 'other species are left alone');
+  // A cabin wall: logs with only player-placed (persistent) leaves nearby.
+  world.commands.length = 0;
+  for (let x = 10; x <= 14; x++) world.set(x, 65, 0, 'minecraft:spruce_log');
+  world.set(12, 66, 0, 'minecraft:spruce_leaves', { persistent_bit: true });
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 9, y: 65, z: 0 }, 'minecraft:spruce_log'));
+  assert.equal(world.commands.length, 0, 'buildings are not felled');
+  powersPlayer(ctx, player, 'minecraft:stick', { power_tree_feller: true });
+  world.set(20, 65, 0, 'minecraft:oak_log'); world.set(20, 66, 0, 'minecraft:oak_leaves', { persistent_bit: false });
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 20, y: 64, z: 0 }, 'minecraft:oak_log'));
+  assert.equal(world.commands.length, 0, 'needs an axe');
+});
+
+test('vein miner breaks connected ore of the same kind, including deepslate and lit variants', () => {
+  const { ctx, player, dimension } = harness();
+  powersPlayer(ctx, player, 'minecraft:diamond_pickaxe', { power_vein_miner: true });
+  const world = sparseWorld(dimension);
+  world.set(1, 10, 0, 'minecraft:redstone_ore');
+  world.set(2, 11, 0, 'minecraft:lit_deepslate_redstone_ore');
+  world.set(3, 11, 1, 'minecraft:deepslate_redstone_ore');
+  world.set(5, 11, 1, 'minecraft:redstone_ore');
+  world.set(0, 11, 0, 'minecraft:coal_ore');
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 0, y: 10, z: 0 }, 'minecraft:lit_redstone_ore'));
+  assert.equal(world.commands.length, 3, world.commands.join('\n'));
+  assert.equal(world.blocks.get('0,11,0').typeId, 'minecraft:coal_ore');
+  assert.equal(world.blocks.get('5,11,1').typeId, 'minecraft:redstone_ore', 'a separate vein stays');
+  powersPlayer(ctx, player, 'minecraft:diamond_pickaxe', {});
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: -1, y: 11, z: 0 }, 'minecraft:coal_ore'));
+  assert.equal(world.commands.length, 3, 'off unless switched on');
+});
+
+test('auto-replant replants ripe crops from the player\'s seeds only', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  powersPlayer(ctx, player, undefined, { power_auto_replant: true });
+  const world = sparseWorld(dimension);
+  const slots = [{ typeId: 'minecraft:wheat_seeds', amount: 2 }];
+  const container = { size: 1, getItem: i => slots[i], setItem: (i, item) => { slots[i] = item; } };
+  const equipment = player.getComponent;
+  player.getComponent = name => name === 'inventory' ? { container } : equipment(name);
+  world.set(0, 63, 0, 'minecraft:farmland');
+  world.set(1, 63, 0, 'minecraft:farmland');
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 1, y: 64, z: 0 }, 'minecraft:wheat', { growth: 3 }));
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 0, y: 64, z: 0 }, 'minecraft:wheat', { growth: 7 }));
+  await tick();
+  assert.equal(world.commands.join('\n'), 'setblock 0 64 0 minecraft:wheat ["growth"=0]');
+  assert.equal(slots[0].amount, 1);
+  world.commands.length = 0;
+  slots[0] = undefined;
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 0, y: 64, z: 0 }, 'minecraft:wheat', { growth: 7 }));
+  await tick();
+  assert.equal(world.commands.length, 0, 'no seeds, no replant');
+});
+
+test('copy saves the box between two corners and paste lands in front of the player in every facing and turn', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  withPlayerProperties(player);
+  const commands = [];
+  dimension.runCommand = c => { commands.push(c); return { successCount: 1 }; };
+  player.location = { x: 10.5, y: 70, z: 10.5 };
+  ctx.markCopyCorner(player, 0);
+  player.location = { x: 14.2, y: 72, z: 5.7 };
+  ctx.markCopyCorner(player, 1);
+  const [c1, c2] = ['copy_corner_1', 'copy_corner_2'].map(k => JSON.parse(player.getDynamicProperty(k)));
+  const bounds = ctx.copyBoundsFromCorners(c1, c2, 6);
+  assert.equal(JSON.stringify(bounds), JSON.stringify({ x1: 10, y1: 69, z1: 5, x2: 14, y2: 77, z2: 10 }));
+  await ctx.copyArea(player, bounds);
+  assert.equal(commands[0], 'structure save ht_copy_player1 10 69 5 14 77 10 false disk true');
+  const clip = JSON.parse(player.getDynamicProperty('clipboard'));
+  assert.equal(clip.size.join(), '5,9,6');
+  player.location = { x: 0.5, y: 64, z: 0.5 };
+  for (const facing of FACINGS) {
+    player.getViewDirection = () => facing;
+    for (let turn = 0; turn < 4; turn++) {
+      const plan = ctx.createStructurePastePlan(player, 'Paste', clip.structure, clip.size, turn);
+      const b = plan.bounds;
+      const [wx, wy, wz] = [b.x2 - b.x1 + 1, b.y2 - b.y1 + 1, b.z2 - b.z1 + 1];
+      assert.equal(`${wx},${wz}`, turn % 2 ? '6,5' : '5,6', 'turning a quarter swaps the footprint');
+      assert.equal(wy, 9);
+      assert.equal(b.y1, 63, 'the bottom layer replaces the ground under the player');
+      assert.ok(!(0 >= b.x1 && 0 <= b.x2 && 0 >= b.z1 && 0 <= b.z2), 'never on top of the player');
+      // The box starts right next to the player in the direction they face.
+      const ahead = { x: facing.x, z: facing.z };
+      assert.ok(ahead.x >= b.x1 && ahead.x <= b.x2 && ahead.z >= b.z1 && ahead.z <= b.z2, `${JSON.stringify(facing)} turn ${turn}`);
+      const rotation = ['0_degrees', '90_degrees', '180_degrees', '270_degrees'][turn];
+      assert.equal(plan.commands.join(), `structure load "ht_copy_player1" ${b.x1} 63 ${b.z1} ${rotation}`);
+    }
+  }
+  commands.length = 0;
+  player.getViewDirection = () => FACINGS[0];
+  const plan = ctx.createStructurePastePlan(player, 'Paste', clip.structure, clip.size, 1);
+  await settle(ctx.executeBuildPlan(player, plan, 'paste', 'pasted ok'), tick);
+  assert.ok(commands[0].startsWith('structure save'), 'paste can be undone');
+  assert.ok(commands[1].startsWith('structure load "ht_copy_player1"'));
+  assert.ok(player.messages.some(m => m.includes('pasted ok')));
+});
+
+test('statues are listed from the generated block and each has a structure file', () => {
+  const { ctx } = harness();
+  const source = fs.readFileSync(process.env.TOOLS_SOURCE || path.join(__dirname, '../Behavior_Pack/scripts/main.js'), 'utf8');
+  assert.match(source, /\/\/ @generated statues begin \(tools\/model_to_structure\.py\)\nconst STATUES = \[\n[\s\S]*?\];\n\/\/ @generated statues end\n/);
+  for (const statue of vm.runInContext('STATUES', ctx)) {
+    const [namespace, name] = statue.structure.split(':');
+    assert.ok(fs.existsSync(path.join(__dirname, '../Behavior_Pack/structures', namespace, `${name}.mcstructure`)), statue.structure);
+    assert.equal(statue.size.length, 3);
+    assert.ok(statue.size.every(n => Number.isInteger(n) && n >= 1 && n <= 64), statue.name);
+  }
 });
