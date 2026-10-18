@@ -3682,7 +3682,8 @@ function createFireworkLauncherPlan(player, count) {
 /**
  * Observer and piston sugar cane farm. Cane grows on sand beside a water
  * channel; when a stalk reaches three blocks the observer fires the piston,
- * and the water carries the cane to a hopper and chest at the right-hand end.
+ * and the water carries the cane to a hopper and chest at the left-hand end
+ * (local +x is the player's left).
  */
 function createSugarCaneFarmPlan(player, width, cropIndex = 0) {
   width = clampNumber(Math.round(width), 2, 8);
@@ -3787,10 +3788,11 @@ function createRailwayPlan(player, length) {
 }
 
 /**
- * Monster spawner XP farm. The spawner sits in a dark room; water streams
+ * Monster spawner XP farm. The spawner works in a dark room; water streams
  * flush the mobs into a trench and down a chute into a two-deep pit. The
- * player stands outside and hits their legs through a one-block gap. The
- * spawner is empty until it is tapped with the spawn egg this tool gives.
+ * player stands outside and hits their legs through a one-block gap. The room
+ * is sealed, so the empty spawner is built in front of the farm where the
+ * player can tap it with the spawn egg; the tap moves it into the room.
  */
 function createSpawnerFarmPlan(player) {
   const c = createOrientedBuildContext(player, 19, 13, -1);
@@ -3806,14 +3808,69 @@ function createSpawnerFarmPlan(player) {
   q.push(fillLocal(c, 1, 4, 11, 17, 4, 11, "minecraft:water"));
   q.push(setLocal(c, 1, 3, 3, "minecraft:water"));
   q.push(setLocal(c, 17, 3, 3, "minecraft:water"));
-  q.push(setLocal(c, 9, 5, 7, "minecraft:mob_spawner"));
+  q.push(setLocal(c, 9, 1, 0, "minecraft:mob_spawner"));
   q.push(setLocal(c, 7, 1, 1, "minecraft:lantern"));
   q.push(setLocal(c, 11, 1, 1, "minecraft:lantern"));
   q.push(setLocal(c, 10, 1, 0, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, -1, 0) })));
   const plan = makePlan(player, "Spawner XP Farm", c, q, localBounds(c, 0, 0, 0, 18, 7, 12));
   plan.batchSize = CONTRAPTION_BATCH_SIZE;
+  plan.spawner = { from: localPoint(c, 9, 1, 0), to: localPoint(c, 9, 5, 7) };
   return plan;
 }
+
+// Spawner XP farms whose spawner is still waiting in front of the farm for its
+// spawn egg, saved on the world so a reload does not strand it there.
+const PENDING_SPAWNERS_KEY = "pending_farm_spawners";
+
+function loadPendingSpawners() {
+  try {
+    const list = JSON.parse(world.getDynamicProperty(PENDING_SPAWNERS_KEY) || "[]");
+    return Array.isArray(list) ? list : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function savePendingSpawners(list) {
+  try {
+    world.setDynamicProperty(PENDING_SPAWNERS_KEY, list.length ? JSON.stringify(list) : undefined);
+  } catch (e) {}
+}
+
+function samePoint(a, b) {
+  return a.x === b.x && a.y === b.y && a.z === b.z;
+}
+
+function addPendingSpawner(dimensionId, spawner) {
+  const list = loadPendingSpawners().filter((e) => !(e.dimensionId === dimensionId && samePoint(e.from, spawner.from)));
+  list.push({ dimensionId, from: spawner.from, to: spawner.to });
+  savePendingSpawners(list);
+}
+
+/** Moves a farm's spawner into its dark room once a spawn egg has set its mob. */
+function handleFarmSpawnerTap(event) {
+  const block = event.block;
+  const item = event.beforeItemStack;
+  if (!block || block.typeId !== "minecraft:mob_spawner" || !item || !/_spawn_egg$/.test(item.typeId)) return;
+  const list = loadPendingSpawners();
+  const index = list.findIndex((e) => e.dimensionId === block.dimension.id && samePoint(e.from, block.location));
+  if (index < 0) return;
+  const [entry] = list.splice(index, 1);
+  savePendingSpawners(list);
+  const player = event.player;
+  // Let the egg finish setting the spawner before it is moved.
+  system.runTimeout(() => {
+    const { from, to } = entry;
+    runCommand(getDimensionById(entry.dimensionId), `clone ${from.x} ${from.y} ${from.z} ${from.x} ${from.y} ${from.z} ${to.x} ${to.y} ${to.z} replace move`).then(() => {
+      if (isValidEntity(player)) player.sendMessage("§a🧟 The spawner is now in the dark room. Wait at the gap and hit the mobs' legs.§r");
+    }).catch((e) => {
+      addPendingSpawner(entry.dimensionId, entry);
+      if (isValidEntity(player)) player.sendMessage(`§eCould not move the spawner into the farm: ${e}. Tap it with a spawn egg again.§r`);
+    });
+  }, 2);
+}
+
+if (world.afterEvents.playerInteractWithBlock) world.afterEvents.playerInteractWithBlock.subscribe(handleFarmSpawnerTap);
 
 /**
  * Wheat farm harvested by flooding: a row of dispensers with water buckets
@@ -3870,7 +3927,10 @@ function createWoolFarmPlan(player) {
   const q = [];
   q.push(fillLocal(c, 0, 1, 0, 4, 3, 6, "minecraft:air"));
   q.push(fillLocal(c, 0, -2, 0, 4, 0, 6, CONTRAPTION_BASE));
-  q.push(setLocal(c, 2, 0, 2, "minecraft:grass_block"));
+  // The sheep turns the grass under it into dirt when it eats. Dirt only turns
+  // back into grass from a grass block next to it, so the pen floor under the
+  // fences is grass too; without it the sheep could eat (and regrow wool) once.
+  q.push(fillLocal(c, 1, 0, 1, 3, 0, 3, "minecraft:grass_block"));
   q.push(setLocal(c, 2, 0, 1, withBlockStates("minecraft:observer", { "minecraft:facing_direction": facingName(c, 0, 1), powered_bit: false })));
   q.push(setLocal(c, 2, 1, 0, "minecraft:redstone_wire"));
   q.push(setLocal(c, 2, 1, 1, withBlockStates("minecraft:dispenser", { facing_direction: facingCode(c, 0, 1), triggered_bit: false })));
@@ -4004,18 +4064,19 @@ const CONTRAPTIONS = [
       { type: "slider", key: "width", label: "Farm width (rows):", min: 2, max: 8, step: 1, defaultValue: 6 }
     ],
     create: (player, v) => createSugarCaneFarmPlan(player, v.width, v.crop),
-    prompt: (plan) => `Build an automatic ${plan.crop} farm ${plan.width} rows wide here?\n\nThe chest is at the right-hand end of the water channel.`,
+    prompt: (plan) => `Build an automatic ${plan.crop} farm ${plan.width} rows wide here?\n\nThe chest is at the left-hand end of the water channel.`,
     success: (plan) => `🌾 Automatic ${plan.crop} farm built (${plan.width} rows)! It is harvested as it grows and floats to the chest.`
   },
   {
     key: "spawner_farm", name: "🧟 Spawner XP Farm", description: "Dark spawner room, water flush and a kill slot",
     fields: [{ type: "dropdown", key: "mob", label: "Mob to farm:", options: SPAWNER_FARM_MOBS.map((m) => m.name) }],
     create: (player) => createSpawnerFarmPlan(player),
-    prompt: () => "Build a monster spawner XP farm here?\n\nYou will get a spawn egg: tap the spawner inside with it to choose the mob. Stand at the front and hit the mobs' legs through the gap.",
-    success: () => "🧟 Spawner XP farm built! Walk in, tap the spawner with the spawn egg, then come back out and wait at the gap.",
-    after: (player, v) => {
+    prompt: () => "Build a monster spawner XP farm here?\n\nYou will get a spawn egg: tap the spawner in front of the farm with it and the spawner moves into the dark room. Then stand at the front and hit the mobs' legs through the gap.",
+    success: () => "🧟 Spawner XP farm built! Tap the spawner in front of the farm with the spawn egg to move it inside, then wait at the gap.",
+    after: (player, v, plan) => {
+      addPendingSpawner(plan.dimensionId, plan.spawner);
       const mob = SPAWNER_FARM_MOBS[v.mob] || SPAWNER_FARM_MOBS[0];
-      if (giveItemToPlayer(player, mob.egg, 1)) player.sendMessage(`§a🥚 A ${mob.label} spawn egg was added to your inventory. Tap the spawner with it.§r`);
+      if (giveItemToPlayer(player, mob.egg, 1)) player.sendMessage(`§a🥚 A ${mob.label} spawn egg was added to your inventory. Tap the spawner in front of the farm with it.§r`);
     }
   },
   {
@@ -4112,7 +4173,7 @@ function openContraptionOptionsMenu(player, contraption) {
     if (!validateBuildBounds(player, plan.bounds)) return;
     const confirm = () => {
       executeBuildPlan(player, plan, `contraption_${contraption.key}`, contraption.success(plan), "random.levelup").then((built) => {
-        if (built && contraption.after && isValidEntity(player)) contraption.after(player, values);
+        if (built && contraption.after && isValidEntity(player)) contraption.after(player, values, plan);
       });
     };
     if (showGuide) startPreview(player, plan.bounds, "minecraft:villager_happy", contraption.prompt(plan), confirm);

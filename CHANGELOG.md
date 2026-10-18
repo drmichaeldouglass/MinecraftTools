@@ -2,6 +2,15 @@
 
 Release notes for the Helper Tools add-on, newest first. Each release bumps both pack manifests so Minecraft recognises the update.
 
+## Version 1.4.4 fixes
+
+- **Spawner XP Farm:** the spawner was built inside a sealed room, so there was no way to reach it with the spawn egg, even though the message said to walk in. The empty spawner is now built in front of the farm. Tap it with the spawn egg and the add-on moves it into the dark room (with `/clone`, which keeps the mob you chose). If the world is reloaded before you tap it, the spawner still moves when you do.
+- **Auto Wool Farm:** the sheep could only regrow its wool once. Eating turns the grass block into dirt, and dirt only grows back into grass from a grass block next to it, but the pen had no other grass. The whole pen floor (under the fences) is now grass.
+- The sugar cane farm's menu and the README said the chest is at the right-hand end of the water channel. It is at the left-hand end.
+- Both manifests and all three rebuilt installers are version 1.4.4.
+
+Validation: all 66 mocked Script API regression tests pass. The two new or updated checks fail against the 1.4.3 script. Every block ID and block state that the twelve contraptions place, in all four facings, was also checked against Mojang's `@minecraft/vanilla-data` 1.26.52 block list, and the direction of every observer, piston, hopper, dispenser and button was checked. Minecraft is not available in this environment, so check in a disposable Minecraft world that tapping the spawner moves it into the room with its mob, and that the sheep regrows wool and is sheared again.
+
 ## Version 1.4.3 fixes
 
 - **Enchant Item in Hand** could never work: the menu only opens while you hold the Helper Device, so the device was always the "item in hand" and the menu said it could not take any enchantments. The button is now **✨ Enchant an Item** and opens a picker listing every enchantable item in your hotbar, inventory, armour slots and off hand, with where it is and how many enchantments it already has. The device, items that cannot be enchanted and items that cannot take any more enchantments are left out. The chosen item is enchanted where it is, so worn armour stays on.
