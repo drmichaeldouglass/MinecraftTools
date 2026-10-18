@@ -2,6 +2,34 @@
 
 Release notes for the Helper Tools add-on, newest first. Each release bumps both pack manifests so Minecraft recognises the update.
 
+## Version 1.5.0: new helpers and machines
+
+**Spawn & Teleport**
+- 💀 **Back to Where I Died** remembers each player's last death spot and takes them back to safe ground near it, in any dimension.
+- 🗺️ **Waypoints**: save up to 20 named places and travel back to them, in any dimension. Safe-landing teleports can now target another dimension.
+
+**🧰 Handy Helpers** (new main menu section)
+- 💎 **Ore Detector** counts an ore group within 8 to 32 blocks, reports the closest block's distance and direction, and draws a sparkle trail to it.
+- 👻 **Show Monster Spawn Spots** marks pitch-dark floor within 16 blocks where monsters can spawn.
+- 🧭 **Coordinates & Chunk Borders** switches the coordinates display and outlines your chunk.
+- ⛏️ **Mining & Farming Powers** (each off by default): Tree Feller (natural trees only, needs an axe), Vein Miner (needs a pickaxe) and Auto-Replant (uses your seeds). Sneak to break a single block. Tools wear as if every block had been broken by hand.
+
+**Builder Tools**
+- 📋 **Copy & Paste**: copy the area between two marked corners (up to 64 × 128 × 64) and paste it in front of you with an optional quarter, half or three-quarter turn. Pastes can be undone.
+- 🗿 **Place a Statue** places statues made with the new `tools/model_to_structure.py`, which turns OBJ/PLY models (vertex colours, material colours or textures, so photogrammetry scans and Blender exports work) or pictures into colour-matched blocks. A rubber duck statue is included.
+
+**Redstone Contraptions** (eight new, twenty in total)
+- 🎃 Pumpkin & Melon Farm, 🥚 Egg Collector, 🌿 Kelp Farm, 🎣 Fishing Spot, 🔔 Doorbell (four tunes), 🔥 Nether Portal (lit, choose the size), 🤫 Secret Door and 🏪 Villager Trading Hall (booths with workstations, optionally with villagers given each job).
+- An automatic item sorter was considered but left out: it needs comparators and repeaters, and their Bedrock direction states could not be checked from the build environment. A wrongly facing comparator would make a sorter that silently does nothing.
+
+Both manifests and all three rebuilt installers are version 1.5.0.
+
+Validation: all 86 mocked Script API regression tests and 30 statue tool tests pass. Every block name and block state used was checked against Mojang's `mojang-blocks.json`, every menu icon against the vanilla resource pack, and the villager job events against Mojang's `villager_v2.json`. The farm tests trace hopper routes to an openable chest, observer-to-piston power through the dust in every facing and size, and the kelp farm's source water on both sides of each harvest spot. Minecraft is not available in this environment, so please check these in a disposable world in particular:
+- Pumpkin & Melon Farm: that the hopper minecarts pick up fruit lying on the dirt above them, and that melons grow under the observers.
+- Kelp Farm: that a harvested spot turns back into source water and the kelp keeps regrowing.
+- Secret Door: that one lever moves both pistons.
+- Doorbell tunes, the lit Nether portal, trading hall villagers keeping their jobs, statue and paste rotations, and the Tree Feller leaving log buildings alone.
+
 ## Version 1.4.6 fixes
 
 - **Modern City:** building stopped with `Syntax error: Unexpected "minecraft:terracotta"`. Bedrock still calls plain terracotta `minecraft:hardened_clay`, so the terracotta tower style now uses that name. Every other block name and block state in the script was checked against Mojang's vanilla block list.
