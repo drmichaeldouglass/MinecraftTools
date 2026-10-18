@@ -832,13 +832,13 @@ test('builder tools menu opens the right tool for every button', async () => {
   modalForm(ctx, titles, null);
   const expected = ['🕳️ Dig an Empty Hole', '🧱 Build / Fill Blocks', '🚜 Flatten / Level Ground', '🪜 Instant Underfoot Platform',
     '🏠 Starter Base Templates', '🏡 House Designs', '🏘️ Build a Village or City', '🔷 Shapes & Beacons', '🏊 Swimming Pool',
-    '🌊 Drain Water & Lava', '⚡ Redstone Contraptions', '🌉 Bridge & Stair Builder', null, '🧹 Area Cleanup', null, '✨ Helper Tools Device ✨'];
+    '🌊 Drain Water & Lava', '⚡ Redstone Contraptions', '🌉 Bridge & Stair Builder', null, '🧹 Area Cleanup', '📋 Copy & Paste', null, null, '✨ Helper Tools Device ✨'];
   for (let i = 0; i < expected.length; i++) {
     titles.length = 0; player.messages.length = 0; selection = i;
     ctx.openBuilderToolsMenu(player);
     await tick();
     if (expected[i]) assert.equal(titles[1], expected[i], `button ${i}`);
-    if (i === 14) assert.ok(player.messages.some(m => m.includes('Nothing to undo')), 'undo button');
+    if (i === 16) assert.ok(player.messages.some(m => m.includes('Nothing to undo')), 'undo button');
     if (i === 12) assert.ok(player.messages.some(m => m.includes('Lit up')), 'light up button');
   }
   assert.equal(buttons, expected.length);
@@ -864,7 +864,7 @@ test('redstone contraptions build in every facing with working parts and undo', 
   const base = harness();
   const keys = base.evaluate('CONTRAPTIONS.map(c => c.key)');
   const limit = base.evaluate('FILL_COMMAND_LIMIT');
-  assert.equal(keys.join(' '), 'auto_door bubble_elevator firework_launcher sugar_cane_farm spawner_farm flood_farm wool_farm cobble_generator smelter water_source street_lamps railway');
+  assert.equal(keys.join(' '), 'auto_door bubble_elevator firework_launcher sugar_cane_farm spawner_farm flood_farm wool_farm cobble_generator smelter water_source street_lamps railway fruit_farm egg_collector kelp_farm fishing_spot doorbell nether_portal secret_door trading_hall');
   for (let f = 0; f < FACINGS.length; f++) {
     const { ctx, player, dimension, tick } = harness();
     player.getViewDirection = () => FACINGS[f];
@@ -882,10 +882,18 @@ test('redstone contraptions build in every facing with working parts and undo', 
       smelter: ctx.createSmelterPlan(player),
       water_source: ctx.createWaterSourcePlan(player),
       street_lamps: ctx.createStreetLampPlan(player, 12),
-      railway: ctx.createRailwayPlan(player, 10)
+      railway: ctx.createRailwayPlan(player, 10),
+      fruit_farm: ctx.createFruitFarmPlan(player, 3, f % 2),
+      egg_collector: ctx.createEggCollectorPlan(player, 4),
+      kelp_farm: ctx.createKelpFarmPlan(player, 3),
+      fishing_spot: ctx.createFishingSpotPlan(player),
+      doorbell: ctx.createDoorbellPlan(player, f),
+      nether_portal: ctx.createNetherPortalPlan(player, 2, 3),
+      secret_door: ctx.createSecretDoorPlan(player, f),
+      trading_hall: ctx.createTradingHallPlan(player, 4, 0, true)
     };
     for (const [key, plan] of Object.entries(plans)) {
-      const blockCommands = plan.commands.filter(c => !c.startsWith('replaceitem') && !c.startsWith('summon'));
+      const blockCommands = plan.commands.filter(c => !/^(replaceitem|summon|structure) /.test(c));
       assertCommandsInside(ctx, { ...plan, commands: blockCommands }, limit);
       player.messages.length = 0;
       await settle(ctx.executeBuildPlan(player, plan, `contraption_${key}`, `${key} done`), tick);
@@ -925,11 +933,11 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.ok(piston.includes(`"facing_direction"=${towardsPlayer[0]}`), piston);
         assert.ok(observer.includes(`"minecraft:facing_direction"="${towardsPlayer[1]}"`), observer);
       } else if (key === 'spawner_farm') {
-        assert.equal(countBlocks(placed, v => v === 'minecraft:mob_spawner'), 1);
-        const waiting = ctx.localPoint(plan.context, 9, 1, 0);
-        assert.equal(dimension.getBlock(waiting).typeId, 'minecraft:mob_spawner', 'the spawner waits in front of the sealed room');
-        assert.equal(JSON.stringify(plan.spawner), JSON.stringify({ from: waiting, to: ctx.localPoint(plan.context, 9, 5, 7) }));
-        assert.equal(dimension.getBlock(plan.spawner.to).typeId, 'minecraft:air');
+        assert.equal(countBlocks(placed, v => v === 'minecraft:mob_spawner'), 0, 'the spawner comes from a preset structure');
+        const spawner = ctx.localPoint(plan.context, 9, 5, 7);
+        assert.equal(JSON.stringify(plan.spawner), JSON.stringify(spawner));
+        assert.equal(plan.commands.filter(c => c.startsWith('structure')).join('\n'), `structure load "helpertools:zombie_spawner" ${spawner.x} ${spawner.y} ${spawner.z}`);
+        assert.equal(dimension.getBlock(spawner).typeId, 'minecraft:air', 'the spawner sits in the open part of the dark room');
         assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 19);
         assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
         const gap = ctx.localPoint(plan.context, 9, 1, 2), pit = ctx.localPoint(plan.context, 9, 1, 3), floor = ctx.localPoint(plan.context, 9, 0, 3);
@@ -977,6 +985,38 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.equal(countBlocks(placed, v => v === 'minecraft:daylight_detector_inverted'), 24);
         assert.equal(plan.bounds.y1, 64);
         assert.equal(plan.bounds.y2, 67);
+      } else if (key === 'fruit_farm') {
+        assert.equal(countBlocks(placed, v => v === (f % 2 ? 'minecraft:melon_stem' : 'minecraft:pumpkin_stem')), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:piston'), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:observer'), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:rail'), 3);
+        assert.equal(plan.commands.filter(c => c.startsWith('summon minecraft:hopper_minecart')).length, 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
+      } else if (key === 'egg_collector') {
+        assert.equal(plan.commands.filter(c => /^summon minecraft:chicken -?\d+\.5 \d+ -?\d+\.5$/.test(c)).length, 4);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:hopper'), 5);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
+      } else if (key === 'kelp_farm') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:kelp'), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:piston'), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:observer'), 3);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 2);
+      } else if (key === 'fishing_spot') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 50);
+        assert.equal(dimension.getBlock(plan.seat).typeId, 'minecraft:air', 'room to stand on the seat');
+        assert.equal(dimension.getBlock({ ...plan.seat, y: plan.seat.y - 1 }).typeId, 'minecraft:hopper');
+      } else if (key === 'doorbell') {
+        assert.equal(dimension.getBlock(plan.button).typeId, 'minecraft:stone_button');
+      } else if (key === 'nether_portal') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:obsidian'), 14, 'a 4 × 5 frame with corners');
+        assert.equal(countBlocks(placed, v => v === 'minecraft:portal'), 6);
+        assert.ok(plan.commands.some(c => c.includes(`minecraft:portal ["portal_axis"="${alongX ? 'z' : 'x'}"]`)), 'portal plane runs across the facing direction');
+      } else if (key === 'secret_door') {
+        assert.equal(countBlocks(placed, v => v === 'minecraft:sticky_piston'), 2);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:lever'), 2);
+      } else if (key === 'trading_hall') {
+        assert.equal(plan.commands.filter(c => /^summon minecraft:villager_v2 -?\d+\.5 \d+ -?\d+\.5 minecraft:become_[a-z]+$/.test(c)).length, 4);
+        assert.equal(plan.jobs.join(), 'librarian,armorer,toolsmith,weaponsmith');
       } else if (key === 'railway') {
         assert.equal(countBlocks(placed, v => v === 'minecraft:golden_rail'), 3);
         assert.equal(countBlocks(placed, v => v === 'minecraft:rail'), 7);
@@ -1042,6 +1082,9 @@ test('spawner farm keeps baby zombies behind a half-height kill slot and collect
     const plan = ctx.createSpawnerFarmPlan(player);
     replayContraption(ctx, dimension, plan);
     const get = (x, y, z) => dimension.getBlock(ctx.localPoint(plan.context, x, y, z));
+    for (const [x, y, z] of [[9, 4, 7], [9, 6, 7], [8, 5, 7], [10, 5, 7], [9, 5, 6], [9, 5, 8]]) {
+      assert.equal(get(x, y, z).typeId, 'minecraft:air', 'mobs have room to spawn around the spawner');
+    }
     const slot = get(9, 1, 2);
     assert.equal(slot.typeId, 'minecraft:smooth_stone_slab');
     assert.equal(slot.permutation.getState('minecraft:vertical_half'), 'top');
@@ -1052,7 +1095,7 @@ test('spawner farm keeps baby zombies behind a half-height kill slot and collect
     assert.equal(get(9, 0, 3).typeId, 'minecraft:hopper', 'drops enter the collection system at the kill pit');
     assert.equal(get(10, 0, 1).typeId, 'minecraft:chest');
     assert.equal(get(10, 1, 1).typeId, 'minecraft:air', 'the output chest can be opened');
-    assertCommandsInside(ctx, plan, vm.runInContext('FILL_COMMAND_LIMIT', ctx));
+    assertCommandsInside(ctx, { ...plan, commands: plan.commands.filter(c => !c.startsWith('structure ')) }, vm.runInContext('FILL_COMMAND_LIMIT', ctx));
   }
 });
 
@@ -1063,7 +1106,10 @@ test('every farm and smelter hopper routes items into an accessible container in
   for (const facing of FACINGS) {
     const { ctx, player, dimension } = harness();
     player.getViewDirection = () => facing;
-    const plans = [ctx.createSpawnerFarmPlan(player), ctx.createWoolFarmPlan(player), ctx.createSmelterPlan(player)];
+    const plans = [ctx.createSpawnerFarmPlan(player), ctx.createWoolFarmPlan(player), ctx.createSmelterPlan(player), ctx.createFishingSpotPlan(player)];
+    for (let n = 2; n <= 6; n++) plans.push(ctx.createFruitFarmPlan(player, n));
+    for (let n = 2; n <= 8; n++) plans.push(ctx.createEggCollectorPlan(player, n));
+    for (let n = 1; n <= 6; n++) plans.push(ctx.createKelpFarmPlan(player, n));
     for (let width = 2; width <= 8; width++) plans.push(ctx.createSugarCaneFarmPlan(player, width));
     for (let width = 3; width <= 9; width++) plans.push(ctx.createFloodFarmPlan(player, width));
     for (const plan of plans) {
@@ -1139,42 +1185,35 @@ test('launcher, flood farm and cane farm have continuous powered routes to every
   }
 });
 
-test('tapping the waiting spawner with a spawn egg moves it into the sealed farm room', async () => {
-  const { ctx, player, dimension, tick, callbacks } = harness();
-  const props = {};
-  ctx.world.getDynamicProperty = k => props[k];
-  ctx.world.setDynamicProperty = (k, v) => { if (v === undefined) delete props[k]; else props[k] = v; };
-  const commands = [];
-  dimension.runCommand = c => { commands.push(c); return { successCount: 1 }; };
-  player.getComponent = () => ({ container: { addItem: () => undefined } });
-  ctx.ItemStack = class { constructor(typeId) { this.typeId = typeId; } };
-  const plan = ctx.createSpawnerFarmPlan(player);
-  const contraption = vm.runInContext('CONTRAPTIONS', ctx).find(c => c.key === 'spawner_farm');
-  contraption.after(player, { mob: 0 }, plan);
-  assert.equal(JSON.parse(props.pending_farm_spawners).length, 1);
-  assert.ok(player.messages.some(m => m.includes('in front of the farm')), player.messages.join('\n'));
-  const tap = (location, typeId, item = 'minecraft:zombie_spawn_egg') => ctx.handleFarmSpawnerTap({
-    player, block: { typeId, location, dimension }, beforeItemStack: item && { typeId: item }
+test('spawner farm loads a preset spawner structure that ships with the behavior pack', () => {
+  const { ctx, player } = harness();
+  const { SPAWNER_MOBS, STRUCTURE_DIR, spawnerStructure } = require('../tools/make_spawner_structures.cjs');
+  const mobs = vm.runInContext('SPAWNER_FARM_MOBS', ctx);
+  assert.equal(mobs.length, SPAWNER_MOBS.length);
+  mobs.forEach((mob, i) => {
+    const plan = ctx.createSpawnerFarmPlan(player, i);
+    const spawner = ctx.localPoint(plan.context, 9, 5, 7);
+    assert.ok(plan.commands.includes(`structure load "${mob.structure}" ${spawner.x} ${spawner.y} ${spawner.z}`), mob.structure);
+    assert.equal(plan.mob, mob.label);
+    const [namespace, name] = mob.structure.split(':');
+    assert.equal(namespace, path.basename(STRUCTURE_DIR));
+    const source = SPAWNER_MOBS.find(m => m.name === name);
+    assert.ok(source, `${name} is generated`);
+    assert.equal(source.entity, `minecraft:${mob.label}`);
+    const file = fs.readFileSync(path.join(STRUCTURE_DIR, `${name}.mcstructure`));
+    assert.ok(file.equals(spawnerStructure(source)), `${name}.mcstructure is up to date; run node tools/make_spawner_structures.cjs`);
+    for (const text of ['minecraft:mob_spawner', 'MobSpawner', 'EntityIdentifier', source.entity]) {
+      assert.ok(file.includes(Buffer.from(text)), `${name} contains ${text}`);
+    }
   });
-  tap(plan.spawner.from, 'minecraft:mob_spawner', 'minecraft:diamond');
-  tap(plan.spawner.from, 'minecraft:stone');
-  tap({ x: 999, y: 64, z: 999 }, 'minecraft:mob_spawner');
-  await tick();
-  assert.equal(commands.length, 0, 'other blocks, items and spawners are left alone');
-  tap(plan.spawner.from, 'minecraft:mob_spawner');
-  await tick();
-  const { from, to } = plan.spawner;
-  assert.deepEqual(commands, [`clone ${from.x} ${from.y} ${from.z} ${from.x} ${from.y} ${from.z} ${to.x} ${to.y} ${to.z} replace move`]);
-  await tick();
-  assert.ok(player.messages.some(m => m.includes('now in the dark room')), player.messages.join('\n'));
-  assert.equal(props.pending_farm_spawners, undefined, 'nothing is left waiting');
-  // A failed move keeps the spawner waiting so another tap can retry.
-  contraption.after(player, { mob: 0 }, plan);
-  dimension.runCommand = () => { throw new Error('unloaded'); };
-  tap(plan.spawner.from, 'minecraft:mob_spawner');
-  await tick(); await tick();
-  assert.ok(player.messages.some(m => m.includes('Could not move the spawner')), player.messages.join('\n'));
-  assert.equal(JSON.parse(props.pending_farm_spawners).length, 1);
+});
+
+test('city and builds only use block names that exist in Bedrock', () => {
+  const source = fs.readFileSync(process.env.TOOLS_SOURCE || path.join(__dirname, '../Behavior_Pack/scripts/main.js'), 'utf8');
+  // Java names whose Bedrock blocks are still called something else.
+  for (const javaOnly of ['minecraft:terracotta"', 'minecraft:spawner"']) {
+    assert.ok(!source.includes(`"${javaOnly}`), `${javaOnly.slice(0, -1)} is not a Bedrock block`);
+  }
 });
 
 test('contraption menu builds from its options form and then gives the railway minecart', async () => {
@@ -1197,7 +1236,8 @@ test('contraption menu builds from its options form and then gives the railway m
   ctx.openContraptionOptionsMenu(player, byKey('spawner_farm'));
   for (let i = 0; i < 10; i++) await tick();
   assert.ok(player.messages.some(m => m.includes('XP farm built')), player.messages.join('\n'));
-  assert.equal(given[1].typeId, 'minecraft:skeleton_spawn_egg');
+  assert.equal(given.length, 1, 'the spawner farm needs no spawn egg');
+  assert.ok(player.messages.some(m => m.includes('skeleton spawner is working')), player.messages.join('\n'));
   player.messages.length = 0;
   modalForm(ctx, [], [false]);
   ctx.openContraptionOptionsMenu(player, byKey('water_source'));
@@ -1404,6 +1444,10 @@ test('main and superpowers menus reach the enchanting tools', async () => {
   await tick();
   assert.equal(titles[1], '✨ Enchant & Armour');
   titles.length = 0; selection = 7;
+  ctx.openMainMenu(player);
+  await tick();
+  assert.equal(titles[1], '🧰 Handy Helpers');
+  titles.length = 0; selection = 8;
   ctx.openMainMenu(player);
   await tick();
   assert.ok(player.messages.some(m => m.includes('extra device') || m.includes('Could not access your inventory')), player.messages.join('\n'));
@@ -1657,6 +1701,13 @@ test('no door, lamp, light or furniture placed by a build is overwritten later i
     for (const layout of ['village', 'city']) for (const furniture of [true, false]) {
       plans.push([`${layout} furniture=${furniture}`, ctx.createVillagePlan(player, 0, true, layout, furniture)]);
     }
+    for (const key of evaluate('CONTRAPTIONS.map(c => c.key)')) {
+      const contraption = evaluate('CONTRAPTIONS').find(c => c.key === key);
+      const values = {};
+      for (const field of contraption.fields) values[field.key] = field.type === 'toggle' ? true : (field.defaultValue ?? field.min ?? 0);
+      const plan = contraption.create(player, values);
+      if (plan) plans.push([`contraption ${key}`, plan]);
+    }
     for (const [name, plan] of plans) assert.deepEqual(overwrittenPlacements(ctx, plan.commands), [], name);
   }
 });
@@ -1758,4 +1809,435 @@ test('a failed snapshot does not tell the player to undo a previous build', asyn
   assert.equal(await ctx.executeBuildPlan(player, plan, 'simple_house', 'done'), false);
   assert.ok(player.messages.some(m => m.includes('nothing was built')));
   assert.ok(!player.messages.some(m => m.includes('Undo')));
+});
+
+function withPlayerProperties(player) {
+  const props = {};
+  player.getDynamicProperty = k => props[k];
+  player.setDynamicProperty = (k, v) => { if (v === undefined) delete props[k]; else props[k] = v; };
+  return props;
+}
+
+test('death spot is remembered and the trip back lands safely in the right dimension', async () => {
+  const { ctx, player, dimension } = harness();
+  withPlayerProperties(player);
+  solidColumn(dimension);
+  const nether = { id: 'minecraft:nether', runCommand: () => ({ successCount: 1 }) };
+  solidColumn(nether);
+  ctx.world.getDimension = id => (id.replace('minecraft:', '') === 'nether' ? nether : dimension);
+  ctx.returnToDeathSpot(player);
+  assert.ok(player.messages.some(m => m.includes('No death spot')), player.messages.join('\n'));
+  ctx.rememberDeathSpot({ deadEntity: { typeId: 'minecraft:zombie', location: { x: 1, y: 2, z: 3 }, dimension } });
+  assert.equal(player.getDynamicProperty('last_death'), undefined);
+  ctx.rememberDeathSpot({ deadEntity: Object.assign(player, { typeId: 'minecraft:player', location: { x: 40.7, y: 70.2, z: -12.3 }, dimension: nether }) });
+  assert.equal(player.getDynamicProperty('last_death'), JSON.stringify({ x: 40, y: 70, z: -13, dimensionId: 'minecraft:nether' }));
+  player.dimension = dimension;
+  await ctx.returnToDeathSpot(player);
+  assert.equal(player.teleports.length, 1);
+  assert.equal(player.teleports[0].options.dimension, nether, 'travels to the dimension where the player died');
+  assert.equal(player.teleports[0].loc.x, 40.5);
+  assert.equal(player.teleports[0].loc.z, -12.5);
+});
+
+test('waypoints are saved by name, replaced, listed, travelled to and deleted', async () => {
+  const { ctx, player, dimension } = harness();
+  const props = withPlayerProperties(player);
+  solidColumn(dimension);
+  player.location = { x: 10.5, y: 64, z: -5.5 };
+  assert.equal(ctx.saveWaypoint(player, '   '), false);
+  assert.ok(ctx.saveWaypoint(player, '§cHome\n'));
+  player.location = { x: 100, y: 70, z: 200 };
+  assert.ok(ctx.saveWaypoint(player, 'Mine'));
+  assert.ok(ctx.saveWaypoint(player, 'home'), 'the same name (any case) replaces the old waypoint');
+  let list = ctx.loadWaypoints(player);
+  assert.equal(list.map(w => w.name).join(), 'home,Mine');
+  assert.equal(list[0].x, 100);
+  for (let i = list.length; i < 20; i++) ctx.saveWaypoint(player, `Place ${i}`);
+  assert.equal(ctx.saveWaypoint(player, 'One too many'), false);
+  assert.ok(player.messages.some(m => m.includes('already have 20 waypoints')));
+  await ctx.travelToWaypoint(player, ctx.loadWaypoints(player).find(w => w.name === 'Mine'));
+  assert.equal(player.teleports.at(-1).loc.x, 100.5);
+  ctx.deleteWaypoint(player, 'Mine');
+  assert.ok(!ctx.loadWaypoints(player).some(w => w.name === 'Mine'));
+  props.waypoints = 'not json';
+  assert.deepEqual(Array.from(ctx.loadWaypoints(player)), [], 'damaged data is ignored');
+});
+
+/** A sparse world for helper tests: `set(x, y, z, typeId, states, light)`; everything else is air (light 15). */
+function sparseWorld(dimension) {
+  const blocks = new Map();
+  const key = p => `${p.x},${p.y},${p.z}`;
+  const set = (x, y, z, typeId, states = {}, light = 15) => blocks.set(key({ x, y, z }), { typeId, states, light });
+  const commands = [];
+  dimension.getBlock = p => {
+    const b = blocks.get(key(p)) || { typeId: 'minecraft:air', states: {}, light: 15 };
+    return {
+      typeId: b.typeId, isAir: b.typeId === 'minecraft:air', isLiquid: b.typeId === 'minecraft:water',
+      location: { ...p }, dimension, permutation: { getState: n => b.states[n] }, getLightLevel: () => b.light
+    };
+  };
+  dimension.getBlocks = (volume, filter) => {
+    const { from, to } = volume;
+    const hits = [];
+    for (const [k, b] of blocks) {
+      const [x, y, z] = k.split(',').map(Number);
+      if (x >= from.x && x <= to.x && y >= from.y && y <= to.y && z >= from.z && z <= to.z && filter.includeTypes.includes(b.typeId)) hits.push({ x, y, z });
+    }
+    return { getBlockLocationIterator: () => hits[Symbol.iterator]() };
+  };
+  dimension.runCommand = c => {
+    commands.push(c);
+    const m = c.match(/^setblock (-?\d+) (-?\d+) (-?\d+) minecraft:air destroy$/);
+    if (m) blocks.delete(`${m[1]},${m[2]},${m[3]}`);
+    return { successCount: 1 };
+  };
+  return { blocks, set, commands };
+}
+
+function useBlockVolume(ctx) {
+  ctx.BlockVolume = class { constructor(from, to) { this.from = from; this.to = to; } };
+}
+
+test('ore detector counts a whole ore group, reports the closest block and draws a trail', async () => {
+  const { ctx, player, dimension, tick, intervals } = harness();
+  useBlockVolume(ctx);
+  const world = sparseWorld(dimension);
+  world.set(3, 60, 0, 'minecraft:diamond_ore');
+  world.set(-10, 50, 10, 'minecraft:deepslate_diamond_ore');
+  world.set(1, 64, 1, 'minecraft:iron_ore');
+  world.set(40, 64, 0, 'minecraft:diamond_ore');
+  const particles = [];
+  dimension.spawnParticle = (name, loc) => particles.push({ name, loc });
+  const scan = ctx.scanForOres(player, vm.runInContext('ORE_GROUPS[0]', ctx), 16);
+  for (let i = 0; i < 10; i++) await tick();
+  await scan;
+  assert.ok(player.messages.some(m => m.includes('Found 2 diamond ore blocks within 16 blocks')), player.messages.join('\n'));
+  assert.ok(player.messages.some(m => m.includes('Closest: 5 blocks away (3 east, 4 down)')), player.messages.join('\n'));
+  assert.equal(intervals.size, 1);
+  [...intervals.values()][0]();
+  assert.ok(particles.length > 0 && particles.every(p => p.name === 'minecraft:villager_happy'));
+  player.messages.length = 0;
+  const none = ctx.scanForOres(player, vm.runInContext('ORE_GROUPS[1]', ctx), 8);
+  for (let i = 0; i < 10; i++) await tick();
+  await none;
+  assert.ok(player.messages.some(m => m.includes('No ancient debris within 8 blocks')), player.messages.join('\n'));
+});
+
+test('every ore and helper block name is a real Bedrock block', () => {
+  const { ctx } = harness();
+  const groups = vm.runInContext('ORE_GROUPS', ctx);
+  const names = [...groups.flatMap(g => Array.from(g.blocks)), ...vm.runInContext('[...TREE_LOGS]', ctx), ...Object.keys(vm.runInContext('REPLANT_CROPS', ctx))];
+  // Bedrock IDs checked against Mojang's block list; this guards against typos and Java names.
+  for (const name of names) assert.match(name, /^minecraft:[a-z_]+$/);
+  assert.ok(names.includes('minecraft:lit_deepslate_redstone_ore'));
+  assert.equal(ctx.oreFamily('minecraft:lit_deepslate_redstone_ore'), 'minecraft:redstone_ore');
+  assert.equal(ctx.oreFamily('minecraft:deepslate_iron_ore'), 'minecraft:iron_ore');
+  assert.equal(ctx.oreFamily('minecraft:nether_gold_ore'), 'minecraft:nether_gold_ore');
+  assert.equal(ctx.oreFamily('minecraft:ancient_debris'), 'minecraft:ancient_debris');
+  assert.equal(ctx.oreFamily('minecraft:stone'), null);
+});
+
+test('monster spawn spots need a dark, solid floor with two free blocks above', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  const world = sparseWorld(dimension);
+  world.set(2, 63, 2, 'minecraft:stone'); world.set(2, 64, 2, 'minecraft:air', {}, 0); world.set(2, 65, 2, 'minecraft:air', {}, 0);
+  world.set(3, 63, 2, 'minecraft:stone'); world.set(3, 64, 2, 'minecraft:air', {}, 7);
+  world.set(4, 63, 2, 'minecraft:glass'); world.set(4, 64, 2, 'minecraft:air', {}, 0);
+  world.set(5, 63, 2, 'minecraft:stone'); world.set(5, 64, 2, 'minecraft:air', {}, 0); world.set(5, 65, 2, 'minecraft:stone');
+  world.set(6, 63, 2, 'minecraft:oak_slab'); world.set(6, 64, 2, 'minecraft:air', {}, 0);
+  world.set(7, 63, 2, 'minecraft:water'); world.set(7, 64, 2, 'minecraft:air', {}, 0);
+  assert.equal(ctx.canMonsterSpawnAt(dimension, 2, 64, 2), true);
+  assert.equal(ctx.canMonsterSpawnAt(dimension, 3, 64, 2), false, 'lit');
+  assert.equal(ctx.canMonsterSpawnAt(dimension, 4, 64, 2), false, 'glass floor');
+  assert.equal(ctx.canMonsterSpawnAt(dimension, 5, 64, 2), false, 'no headroom');
+  assert.equal(ctx.canMonsterSpawnAt(dimension, 6, 64, 2), false, 'slab floor');
+  assert.equal(ctx.canMonsterSpawnAt(dimension, 7, 64, 2), false, 'water');
+  const found = ctx.showMonsterSpawnSpots(player);
+  for (let i = 0; i < 20; i++) await tick();
+  await found;
+  assert.ok(player.messages.some(m => m.includes('1 dark spot marked')), player.messages.join('\n'));
+});
+
+test('chunk borders follow 16-block chunks, including negative coordinates', () => {
+  const { ctx } = harness();
+  const b = ctx.chunkBoundsAt({ x: -0.5, y: 70.2, z: 31.9 });
+  assert.equal(`${b.x1},${b.x2},${b.z1},${b.z2},${b.y1},${b.y2}`, '-16,-1,16,31,69,72');
+});
+
+function powersPlayer(ctx, player, tool, powers = {}) {
+  withPlayerProperties(player);
+  for (const [k, v] of Object.entries(powers)) player.setDynamicProperty(k, v);
+  const held = tool && { typeId: tool, getComponent: () => undefined };
+  player.getComponent = name => name === 'equippable' ? { getEquipment: () => held, setEquipment() {} } : undefined;
+  player.getGameMode = () => 'Survival';
+  player.isSneaking = false;
+}
+
+function breakEvent(player, dimension, location, typeId, states = {}) {
+  return { player, block: { location, dimension }, brokenBlockPermutation: { type: { id: typeId }, getState: n => states[n] } };
+}
+
+test('tree feller fells natural trees with an axe but never log cabins, and sneaking breaks one log', () => {
+  const { ctx, player, dimension } = harness();
+  powersPlayer(ctx, player, 'minecraft:iron_axe', { power_tree_feller: true });
+  const world = sparseWorld(dimension);
+  for (let y = 65; y <= 69; y++) world.set(0, y, 0, 'minecraft:oak_log');
+  world.set(1, 68, 1, 'minecraft:oak_log');
+  world.set(0, 70, 0, 'minecraft:oak_leaves', { persistent_bit: false });
+  world.set(0, 68, 1, 'minecraft:birch_log');
+  player.isSneaking = true;
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 0, y: 64, z: 0 }, 'minecraft:oak_log'));
+  assert.equal(world.commands.length, 0, 'sneaking breaks one block');
+  player.isSneaking = false;
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 0, y: 64, z: 0 }, 'minecraft:oak_log'));
+  assert.equal(world.commands.length, 6, world.commands.join('\n'));
+  assert.ok(world.commands.every(c => c.endsWith('minecraft:air destroy')));
+  assert.equal(world.blocks.get('0,68,1').typeId, 'minecraft:birch_log', 'other species are left alone');
+  // A cabin wall: logs with only player-placed (persistent) leaves nearby.
+  world.commands.length = 0;
+  for (let x = 10; x <= 14; x++) world.set(x, 65, 0, 'minecraft:spruce_log');
+  world.set(12, 66, 0, 'minecraft:spruce_leaves', { persistent_bit: true });
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 9, y: 65, z: 0 }, 'minecraft:spruce_log'));
+  assert.equal(world.commands.length, 0, 'buildings are not felled');
+  powersPlayer(ctx, player, 'minecraft:stick', { power_tree_feller: true });
+  world.set(20, 65, 0, 'minecraft:oak_log'); world.set(20, 66, 0, 'minecraft:oak_leaves', { persistent_bit: false });
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 20, y: 64, z: 0 }, 'minecraft:oak_log'));
+  assert.equal(world.commands.length, 0, 'needs an axe');
+});
+
+test('vein miner breaks connected ore of the same kind, including deepslate and lit variants', () => {
+  const { ctx, player, dimension } = harness();
+  powersPlayer(ctx, player, 'minecraft:diamond_pickaxe', { power_vein_miner: true });
+  const world = sparseWorld(dimension);
+  world.set(1, 10, 0, 'minecraft:redstone_ore');
+  world.set(2, 11, 0, 'minecraft:lit_deepslate_redstone_ore');
+  world.set(3, 11, 1, 'minecraft:deepslate_redstone_ore');
+  world.set(5, 11, 1, 'minecraft:redstone_ore');
+  world.set(0, 11, 0, 'minecraft:coal_ore');
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 0, y: 10, z: 0 }, 'minecraft:lit_redstone_ore'));
+  assert.equal(world.commands.length, 3, world.commands.join('\n'));
+  assert.equal(world.blocks.get('0,11,0').typeId, 'minecraft:coal_ore');
+  assert.equal(world.blocks.get('5,11,1').typeId, 'minecraft:redstone_ore', 'a separate vein stays');
+  powersPlayer(ctx, player, 'minecraft:diamond_pickaxe', {});
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: -1, y: 11, z: 0 }, 'minecraft:coal_ore'));
+  assert.equal(world.commands.length, 3, 'off unless switched on');
+});
+
+test('auto-replant replants ripe crops from the player\'s seeds only', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  powersPlayer(ctx, player, undefined, { power_auto_replant: true });
+  const world = sparseWorld(dimension);
+  const slots = [{ typeId: 'minecraft:wheat_seeds', amount: 2 }];
+  const container = { size: 1, getItem: i => slots[i], setItem: (i, item) => { slots[i] = item; } };
+  const equipment = player.getComponent;
+  player.getComponent = name => name === 'inventory' ? { container } : equipment(name);
+  world.set(0, 63, 0, 'minecraft:farmland');
+  world.set(1, 63, 0, 'minecraft:farmland');
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 1, y: 64, z: 0 }, 'minecraft:wheat', { growth: 3 }));
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 0, y: 64, z: 0 }, 'minecraft:wheat', { growth: 7 }));
+  await tick();
+  assert.equal(world.commands.join('\n'), 'setblock 0 64 0 minecraft:wheat ["growth"=0]');
+  assert.equal(slots[0].amount, 1);
+  world.commands.length = 0;
+  slots[0] = undefined;
+  ctx.handlePowerBlockBreak(breakEvent(player, dimension, { x: 0, y: 64, z: 0 }, 'minecraft:wheat', { growth: 7 }));
+  await tick();
+  assert.equal(world.commands.length, 0, 'no seeds, no replant');
+});
+
+test('copy saves the box between two corners and paste lands in front of the player in every facing and turn', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  withPlayerProperties(player);
+  const commands = [];
+  dimension.runCommand = c => { commands.push(c); return { successCount: 1 }; };
+  player.location = { x: 10.5, y: 70, z: 10.5 };
+  ctx.markCopyCorner(player, 0);
+  player.location = { x: 14.2, y: 72, z: 5.7 };
+  ctx.markCopyCorner(player, 1);
+  const [c1, c2] = ['copy_corner_1', 'copy_corner_2'].map(k => JSON.parse(player.getDynamicProperty(k)));
+  const bounds = ctx.copyBoundsFromCorners(c1, c2, 6);
+  assert.equal(JSON.stringify(bounds), JSON.stringify({ x1: 10, y1: 69, z1: 5, x2: 14, y2: 77, z2: 10 }));
+  await ctx.copyArea(player, bounds);
+  assert.equal(commands[0], 'structure save ht_copy_player1 10 69 5 14 77 10 false disk true');
+  const clip = JSON.parse(player.getDynamicProperty('clipboard'));
+  assert.equal(clip.size.join(), '5,9,6');
+  player.location = { x: 0.5, y: 64, z: 0.5 };
+  for (const facing of FACINGS) {
+    player.getViewDirection = () => facing;
+    for (let turn = 0; turn < 4; turn++) {
+      const plan = ctx.createStructurePastePlan(player, 'Paste', clip.structure, clip.size, turn);
+      const b = plan.bounds;
+      const [wx, wy, wz] = [b.x2 - b.x1 + 1, b.y2 - b.y1 + 1, b.z2 - b.z1 + 1];
+      assert.equal(`${wx},${wz}`, turn % 2 ? '6,5' : '5,6', 'turning a quarter swaps the footprint');
+      assert.equal(wy, 9);
+      assert.equal(b.y1, 63, 'the bottom layer replaces the ground under the player');
+      assert.ok(!(0 >= b.x1 && 0 <= b.x2 && 0 >= b.z1 && 0 <= b.z2), 'never on top of the player');
+      // The box starts right next to the player in the direction they face.
+      const ahead = { x: facing.x, z: facing.z };
+      assert.ok(ahead.x >= b.x1 && ahead.x <= b.x2 && ahead.z >= b.z1 && ahead.z <= b.z2, `${JSON.stringify(facing)} turn ${turn}`);
+      const rotation = ['0_degrees', '90_degrees', '180_degrees', '270_degrees'][turn];
+      assert.equal(plan.commands.join(), `structure load "ht_copy_player1" ${b.x1} 63 ${b.z1} ${rotation}`);
+    }
+  }
+  commands.length = 0;
+  player.getViewDirection = () => FACINGS[0];
+  const plan = ctx.createStructurePastePlan(player, 'Paste', clip.structure, clip.size, 1);
+  await settle(ctx.executeBuildPlan(player, plan, 'paste', 'pasted ok'), tick);
+  assert.ok(commands[0].startsWith('structure save'), 'paste can be undone');
+  assert.ok(commands[1].startsWith('structure load "ht_copy_player1"'));
+  assert.ok(player.messages.some(m => m.includes('pasted ok')));
+});
+
+test('statues are listed from the generated block and each has a structure file', () => {
+  const { ctx } = harness();
+  const source = fs.readFileSync(process.env.TOOLS_SOURCE || path.join(__dirname, '../Behavior_Pack/scripts/main.js'), 'utf8');
+  assert.match(source, /\/\/ @generated statues begin \(tools\/model_to_structure\.py\)\nconst STATUES = \[\n[\s\S]*?\];\n\/\/ @generated statues end\n/);
+  for (const statue of vm.runInContext('STATUES', ctx)) {
+    const [namespace, name] = statue.structure.split(':');
+    assert.ok(fs.existsSync(path.join(__dirname, '../Behavior_Pack/structures', namespace, `${name}.mcstructure`)), statue.structure);
+    assert.equal(statue.size.length, 3);
+    assert.ok(statue.size.every(n => Number.isInteger(n) && n >= 1 && n <= 64), statue.name);
+  }
+});
+
+/** Redstone dust reachable from `start` (with power), following flat links and one-block steps. */
+function dustNetwork(dimension, starts) {
+  const key = p => `${p.x},${p.y},${p.z}`;
+  const isDust = p => dimension.getBlock(p).typeId === 'minecraft:redstone_wire';
+  const solid = p => !['minecraft:air', 'minecraft:water', 'minecraft:redstone_wire'].includes(dimension.getBlock(p).typeId);
+  const reached = new Map();
+  const queue = starts.map(p => [p, 15]);
+  while (queue.length) {
+    const [p, power] = queue.shift();
+    if (power <= 0 || !isDust(p) || (reached.get(key(p)) || 0) >= power) continue;
+    reached.set(key(p), power);
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const flat = { x: p.x + dx, y: p.y, z: p.z + dz };
+      queue.push([flat, power - 1]);
+      // Up a step needs air above this dust; down a step needs air above the lower dust.
+      if (!solid({ x: p.x, y: p.y + 1, z: p.z })) queue.push([{ ...flat, y: p.y + 1 }, power - 1]);
+      if (!solid(flat)) queue.push([{ ...flat, y: p.y - 1 }, power - 1]);
+    }
+  }
+  return reached;
+}
+
+test('fruit and kelp farm pistons are powered by their observers, and kelp spots refill with source water', () => {
+  const key = p => `${p.x},${p.y},${p.z}`;
+  for (const facing of FACINGS) {
+    for (let units = 2; units <= 6; units++) {
+      const { ctx, player, dimension } = harness();
+      player.getViewDirection = () => facing;
+      const plan = ctx.createFruitFarmPlan(player, units);
+      replayContraption(ctx, dimension, plan);
+      const at = (x, y, z) => ctx.localPoint(plan.context, x, y, z);
+      for (let u = 0; u < units; u++) {
+        const px = 1 + 2 * u, fx = 2 + 2 * u;
+        const observer = dimension.getBlock(at(fx, 2, 2));
+        assert.equal(observer.permutation.getState('minecraft:facing_direction'), 'down', 'observer watches the fruit spot');
+        assert.equal(dimension.getBlock(at(fx, 1, 2)).typeId, 'minecraft:air', 'room for the fruit');
+        assert.equal(dimension.getBlock(at(fx, 0, 2)).typeId, 'minecraft:dirt');
+        // The only free neighbour of the stem is the fruit spot.
+        for (const [x, z] of [[fx - 1, 3], [fx + 1, 3], [fx, 4]]) assert.notEqual(dimension.getBlock(at(x, 1, z)).typeId, 'minecraft:air', `stem side ${x},${z}`);
+        const network = dustNetwork(dimension, [at(fx, 3, 2)]);
+        assert.ok(network.has(key(at(px, 3, 2))), `units ${units}: dust above piston ${u} is powered`);
+        assert.equal(dimension.getBlock(at(px, 2, 2)).typeId, 'minecraft:smooth_stone', 'solid block between dust and piston');
+        const piston = dimension.getBlock(at(px, 1, 2)).permutation.getState('facing_direction');
+        const pushes = { 2: [0, 1], 3: [0, -1], 4: [1, 0], 5: [-1, 0] }[piston];
+        const towardFruit = [at(fx, 1, 2).x - at(px, 1, 2).x, at(fx, 1, 2).z - at(px, 1, 2).z];
+        assert.deepEqual(pushes, towardFruit, 'piston pushes the fruit');
+        assert.equal(dimension.getBlock(at(fx, 0, 4)).typeId, 'minecraft:water', 'farmland is watered');
+      }
+    }
+    for (let plants = 1; plants <= 6; plants++) {
+      const { ctx, player, dimension } = harness();
+      player.getViewDirection = () => facing;
+      const plan = ctx.createKelpFarmPlan(player, plants);
+      replayContraption(ctx, dimension, plan);
+      const at = (x, y, z) => ctx.localPoint(plan.context, x, y, z);
+      const middle = plants + 2;
+      assert.equal(dimension.getBlock(at(middle, 3, 2)).typeId, 'minecraft:water', 'stream source in the middle');
+      assert.ok(middle - 1 <= 7 && 2 * plants + 3 - middle <= 7, 'the stream reaches both hoppers');
+      for (let k = 0; k < plants; k++) {
+        const x = 3 + 2 * k;
+        assert.equal(dimension.getBlock(at(x, 1, 2)).typeId, 'minecraft:kelp');
+        assert.equal(dimension.getBlock(at(x, 0, 2)).typeId, 'minecraft:sand');
+        for (const side of [x - 1, x + 1]) {
+          assert.equal(dimension.getBlock(at(side, 2, 2)).typeId, 'minecraft:water', 'source water on both sides of the harvest spot');
+          assert.notEqual(dimension.getBlock(at(side, 2, 1)).typeId, 'minecraft:piston', 'neighbouring columns are never harvested');
+        }
+        const network = dustNetwork(dimension, [at(x, 3, 4)]);
+        assert.ok(network.has(key(at(x, 4, 1))), `plants ${plants}: dust reaches the block above piston ${k}`);
+        assert.equal(network.size, 4, 'each kelp column has its own circuit');
+        assert.equal(dimension.getBlock(at(x, 2, 4)).typeId, 'minecraft:smooth_stone', 'observer output block under the dust');
+      }
+    }
+  }
+});
+
+test('secret door levers power both pistons, and the pistons slide the wall across the doorway', () => {
+  for (const facing of FACINGS) {
+    const { ctx, player, dimension } = harness();
+    player.getViewDirection = () => facing;
+    const plan = ctx.createSecretDoorPlan(player, 1);
+    replayContraption(ctx, dimension, plan);
+    const at = (x, y, z) => ctx.localPoint(plan.context, x, y, z);
+    const adjacent = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y) + Math.abs(a.z - b.z) === 1;
+    for (const z of [0, 2]) {
+      const lever = dimension.getBlock(at(4, 1, z));
+      assert.equal(lever.typeId, 'minecraft:lever');
+      assert.match(lever.permutation.getState('lever_direction'), /^down_/, 'hangs from the block above');
+      assert.ok(adjacent(at(4, 1, z), at(4, 1, 1)), 'lever touches the lower piston');
+      assert.notEqual(dimension.getBlock(at(4, 2, z)).typeId, 'minecraft:air', 'lever hangs from a solid block');
+      assert.ok(adjacent(at(4, 2, z), at(4, 2, 1)), 'that block touches the upper piston');
+    }
+    for (const y of [1, 2]) {
+      assert.equal(dimension.getBlock(at(2, y, 1)).typeId, 'minecraft:air', 'starts open');
+      assert.equal(dimension.getBlock(at(3, y, 1)).typeId, 'minecraft:bookshelf', 'door block ready on the piston face');
+      const piston = dimension.getBlock(at(4, y, 1)).permutation.getState('facing_direction');
+      const pushes = { 2: [0, 1], 3: [0, -1], 4: [1, 0], 5: [-1, 0] }[piston];
+      assert.deepEqual(pushes, [at(3, y, 1).x - at(4, y, 1).x, at(3, y, 1).z - at(4, y, 1).z], 'pushes toward the doorway');
+    }
+  }
+});
+
+test('doorbells play their tune once per press and only for registered buttons', async () => {
+  const { ctx, dimension } = harness();
+  const props = {};
+  ctx.world.getDynamicProperty = k => props[k];
+  ctx.world.setDynamicProperty = (k, v) => { props[k] = v; };
+  const played = [];
+  const timeouts = [];
+  ctx.system.runTimeout = (fn, ticks) => timeouts.push({ fn, ticks });
+  dimension.playSound = (id, at, options) => played.push({ id, pitch: options.pitch });
+  ctx.addDoorbell('minecraft:overworld', { x: 1, y: 65, z: 2 }, 1);
+  const press = location => ctx.handleDoorbellPush({ block: { location, dimension } });
+  press({ x: 9, y: 65, z: 2 });
+  assert.equal(timeouts.length, 0, 'unregistered buttons are ignored');
+  press({ x: 1, y: 65, z: 2 });
+  press({ x: 1, y: 65, z: 2 });
+  const song = vm.runInContext('DOORBELL_SONGS[1]', ctx);
+  assert.equal(timeouts.length, song.notes.length + 1, 'a second press while ringing is ignored');
+  for (const t of timeouts.splice(0)) t.fn();
+  assert.equal(played.length, song.notes.length);
+  assert.ok(played.every(p => p.id === 'note.bell'));
+  assert.ok(Math.abs(ctx.notePitch(66) - 1) < 1e-9 && Math.abs(ctx.notePitch(78) - 2) < 1e-9, 'F♯ is pitch 1, an octave up is 2');
+  for (const s of vm.runInContext('DOORBELL_SONGS', ctx)) for (const [note] of s.notes) assert.ok(note >= 54 && note <= 78, 'within the note block range');
+  press({ x: 1, y: 65, z: 2 });
+  assert.ok(timeouts.length > 0, 'rings again once the tune has finished');
+});
+
+test('nether portals refuse the End, and trading halls can be all librarians or empty', () => {
+  const { ctx, player } = harness();
+  player.dimension = { id: 'minecraft:the_end' };
+  assert.equal(ctx.createNetherPortalPlan(player, 2, 3), null);
+  player.dimension = { id: 'minecraft:overworld' };
+  const plan = ctx.createNetherPortalPlan(player, 99, 1);
+  assert.equal(`${plan.width}x${plan.height}`, '6x3');
+  const hall = ctx.createTradingHallPlan(player, 3, 1, false);
+  assert.equal(hall.jobs.join(), 'librarian,librarian,librarian');
+  assert.ok(!hall.commands.some(c => c.startsWith('summon')));
+  const jobs = vm.runInContext('TRADING_JOBS', ctx);
+  assert.equal(jobs.length, 13);
+  assert.ok(jobs.some(j => j.event === 'minecraft:become_sheperd'), "Mojang's spelling of the shepherd event");
 });

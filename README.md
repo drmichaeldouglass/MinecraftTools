@@ -1,6 +1,6 @@
 # 🪄 Helper Tools: a Minecraft Bedrock Add-On
 
-**Current version: 1.4.5** · Requires Minecraft Bedrock **1.26.40 or newer** · No experiments needed
+**Current version: 1.5.0** · Requires Minecraft Bedrock **1.26.40 or newer** · No experiments needed
 
 Helper Tools gives every player a **Helper Device**, a glowing magic wand. Use it and a colourful menu opens with one-tap helpers: change the time or weather, heal up, escape from a cave, gain superpowers, summon tame pets, teleport to friends or biomes, and build anything from a simple hole to a whole furnished village, a glowing beacon, a sphere or a swimming pool. Builder tools show a glowing 3D preview in the world before anything changes, and the last build can be undone.
 
@@ -10,17 +10,18 @@ It was made with younger players in mind, so every option is a big labelled butt
 
 ## ✨ What the add-on does
 
-The Helper Device menu has seven sections.
+The Helper Device menu has eight sections.
 
 | Section | What's inside |
 | --- | --- |
 | 🎮 **Game Modes & Time** | Day, night, clear weather, Creative and Survival mode |
 | 🛡️ **Life Savers & Rescue** | Heal and feed, clear nearby monsters, cave rescue, fire shield, cure effects |
 | ⚡ **Superpowers & Flying** | Night vision, super speed and jump, Elytra with rockets |
-| 🏗️ **Builder Tools** | Dig, fill, flatten, platforms, houses, a whole village or city, shapes and beacons, swimming pools, draining water and lava, redstone contraptions, bridges, stairs, torches, cleanup, undo |
-| 📍 **Spawn & Teleport** | Set and return to spawn, teleport to players, find biomes and structures, go to coordinates |
+| 🏗️ **Builder Tools** | Dig, fill, flatten, platforms, houses, a whole village or city, shapes and beacons, swimming pools, draining water and lava, redstone contraptions, bridges, stairs, torches, cleanup, copy and paste, statues, undo |
+| 📍 **Spawn & Teleport** | Set and return to spawn, teleport to players, find biomes and structures, go to coordinates, go back to where you died, named waypoints |
 | 🐾 **Pets & Companions** | Tame dog, cat, parrot, saddled horse, iron golem, axolotl |
 | ✨ **Enchant & Armour** | Enchant any item you carry or wear, full armour sets, enchanted tool kits, armour trim kits |
+| 🧰 **Handy Helpers** | Ore detector, monster spawn spots, coordinates and chunk borders, tree feller, vein miner, auto-replant |
 
 ### 🎮 Game Modes & Time
 - ☀️ **Set Daytime** and 🌙 **Set Nighttime**
@@ -55,10 +56,12 @@ Builds are placed in front of you, in the direction you are facing.
 | 🔷 **Shapes & Beacons** | Sphere, dome, stepped pyramid, cylinder or tower (height 1 gives a disc or ring) and cone, solid or hollow, in any block from the list or a typed block ID. Radius up to 25, pyramid base up to 61. Plus a working beacon on a 1 to 4 level pyramid of iron, gold, emerald, diamond, netherite or a rainbow mix, with an optional coloured beam and the sky above cleared. |
 | 🏊 **Swimming Pool** | Pool 1 to 25 blocks wide and long, 1 to 6 deep, sunk into the ground with the water level with the surface. Six tile colours, five deck materials (or none), underwater sea lanterns and a diving board. |
 | 🌊 **Drain Water & Lava** | Removes water, lava or both within 3 to 25 blocks of you. Undoable. |
-| ⚡ **Redstone Contraptions** | Twelve working machines: Automatic Door (iron door opened by plates or buttons), Bubble Elevator (soul sand lift up a glass tower with an optional magma shaft down), Firework Launcher (up to 9 dispensers fired by one button), Auto Sugar Cane or Bamboo Farm (observers and pistons into a chest), Spawner XP Farm (dark spawner room with water flush and a kill slot; you get a zombie or skeleton spawn egg, tap the spawner in front of the farm with it and it moves inside), Flood Wheat Farm (press a button to wash the harvest into a chest), Auto Wool Farm (a dispenser shears a sheep whenever it eats), Cobblestone Generator, Auto Smelter (three hopper-fed furnaces), Infinite Water Source, Night Lamps (lamp posts that switch on at dusk) and Powered Railway (powered track plus a minecart) |
+| ⚡ **Redstone Contraptions** | Twenty working machines: Automatic Door (iron door opened by plates or buttons), Bubble Elevator (soul sand lift up a glass tower with an optional magma shaft down), Firework Launcher (up to 9 dispensers fired by one button), Auto Sugar Cane or Bamboo Farm (observers and pistons into a chest), Spawner XP Farm (dark room with a ready-set zombie or skeleton spawner, water flush and a kill slot), Flood Wheat Farm (press a button to wash the harvest into a chest), Auto Wool Farm (a dispenser shears a sheep whenever it eats), Cobblestone Generator, Auto Smelter (three hopper-fed furnaces), Infinite Water Source, Night Lamps (lamp posts that switch on at dusk), Powered Railway (powered track plus a minecart), Pumpkin & Melon Farm (observers and pistons, collected by hopper minecarts into a chest), Egg Collector (chickens over hoppers), Kelp Farm (harvested kelp floats to chests at both ends), Fishing Spot (a seat over a hopper and chest by a pool, with an optional enchanted rod), Doorbell (plays one of four tunes), Nether Portal (lit, in a size you choose), Secret Door (a lever slides part of a wall across a doorway) and Villager Trading Hall (booths with workstations, and villagers with those jobs if you like) |
 | 🌉 **Bridge & Stair Builder** | Bridges 3 to 50 blocks long with optional railings; staircases up or down, 1, 3 or 5 blocks wide, with optional headroom clearing |
 | 💡 **Light Up Area** | Places torches in a grid on the ground around you so monsters can't spawn |
 | 🧹 **Area Cleanup** | Removes dropped items, XP orbs, arrows, boats and minecarts or hostile mobs within 10 to 100 blocks. Players, pets, villagers and friendly mobs are protected. |
+| 📋 **Copy & Paste** | Mark two corners, copy everything between them (up to 64 × 128 × 64 blocks) and paste it in front of you, turned if you like. Undoable. |
+| 🗿 **Place a Statue** | Places a statue or pixel-art picture made from a 3D model or image with `tools/model_to_structure.py`. A rubber duck comes with the add-on. |
 | ↩️ **Undo Last Build/Hole** | Puts back what your last build replaced |
 
 ### 📍 Spawn & Teleport
@@ -67,8 +70,16 @@ Builds are placed in front of you, in the direction you are facing.
 - 🌎 **Find Nearest Biome**: choose a biome in your current dimension (Overworld, Nether or The End). The add-on shows its coordinates and distance, and **🚀 Teleport There Now** takes you straight there.
 - 🏰 **Find Nearest Structure**: choose a village, trial chamber, ancient city, stronghold, fortress, End city and more. The add-on gives you the `/locate` command to find it (see [Finding structures](#finding-structures) below).
 - 🧭 **Teleport to Coordinates**: type X and Z (Y is optional) and go there.
+- 💀 **Back to Where I Died**: takes you to your last death spot, in any dimension, so you can pick up your things. Dropped items vanish after 5 minutes.
+- 🗺️ **Waypoints**: save up to 20 named places (Home, Mine, Village...) and travel back to any of them, in any dimension.
 
 Every teleport loads the destination first and puts you on solid ground with headroom, never in lava, inside rock or on the Nether roof. You get 10 seconds of Resistance and Fire Resistance for the landing. If there is nowhere safe to stand, you stay where you are.
+
+### 🧰 Handy Helpers
+- 💎 **Ore Detector**: pick an ore (diamonds, ancient debris, emeralds, gold, iron, redstone, lapis, copper, coal or quartz) and a distance of 8 to 32 blocks. It counts the ore blocks around you, says how far away the closest one is and which way (for example "4 east, 9 down"), and draws a trail of green sparkles towards it for 15 seconds.
+- 👻 **Show Monster Spawn Spots**: marks pitch-dark floor within 16 blocks where monsters can spawn with grey clouds for 30 seconds. It is made for caves and buildings: open ground under the sky is dark only at night, so it is not marked.
+- 🧭 **Coordinates & Chunk Borders**: turns the on-screen coordinates on or off (for everyone in the world), or outlines the 16 × 16 chunk you are in for 60 seconds.
+- ⛏️ **Mining & Farming Powers**: switch each one on or off for yourself. **Tree Feller** fells a whole natural tree when you chop a log with an axe (log cabins are safe: it only works when natural leaves touch the trunk). **Vein Miner** breaks the rest of an ore vein when you mine one block with a pickaxe. **Auto-Replant** replants ripe wheat, carrots, potatoes, beetroot and nether wart using seeds from your inventory. Sneak while breaking a block to break just that one. Extra blocks drop as if mined without enchantments, and your tool wears as if it broke each block.
 
 ### 🐾 Pets & Companions
 - 🐕 Tamed dog, 🐈 tamed cat, 🦜 tamed parrot, 🐴 tamed horse with a saddle, 🦾 iron golem bodyguard and 🦎 axolotl.
@@ -150,7 +161,7 @@ Pick a section, then a tool. Every sub-menu has a **⬅️ Back** button.
 5. Made a mistake? Use **↩️ Undo Last Build/Hole**.
 
 About undo:
-- It remembers **one** build per player: your most recent dig, fill, flatten, platform, base, house, village, shape, beacon, pool, drain, contraption, bridge or staircase. A new build replaces the saved one.
+- It remembers **one** build per player: your most recent dig, fill, flatten, platform, base, house, village, shape, beacon, pool, drain, contraption, bridge, staircase, paste or statue. A new build replaces the saved one.
 - The undo is kept in memory, so it is lost when the world is closed.
 - Torches from **Light Up Area** and things removed by **Area Cleanup** can't be undone.
 
@@ -161,11 +172,17 @@ Houses, the village and the city are furnished with the add-on's own furniture b
 
 Shapes rest on the ground at your feet and start one block in front of you, so stand back from where you want the middle to be. Large hollow spheres and cones are placed over a few seconds. A **Beacon** only shines when nothing solid is straight above it, so leave **Clear the sky** on unless you are already outdoors. After it is built, tap the beacon block to pick its power.
 
-The **Spawner XP Farm** needs one step from you: tap the spawner in front of the farm with the spawn egg the device gives you, then stand at the half-block gap outside and hit the mobs' legs. Drops collect in the recessed chest beside the gap. The **Flood Wheat Farm** is harvested by pressing the button at the back; press it again to take the water back, then replant.
+The **Spawner XP Farm** is ready as soon as it is built: the zombie or skeleton spawner you picked is already set and sealed inside the dark room. Stand at the half-block gap at the front and hit the mobs' legs. Drops collect in the recessed chest beside the gap. Hostile mobs need a difficulty other than Peaceful, and you must stay within 16 blocks of the spawner. The **Flood Wheat Farm** is harvested by pressing the button at the back; press it again to take the water back, then replant.
 
 The **Swimming Pool** is dug into the ground in front of you, so stand on flat land at the level you want the deck. **Drain Water & Lava** clears a cube around you; water from outside the cube can flow back in, so drain a little wider than the pond you want gone.
 
-**Redstone Contraptions** are placed in front of you like other builds. For the Bubble Elevator, open the door at the bottom, step in and float up; at the top, walk out onto the landing behind the tower, and use the magma shaft (if you added one) to come down, stepping out of its door quickly because magma is hot. The Firework Launcher fires when you press the button on the end of the row. The Sugar Cane Farm harvests by itself; collect from the chest at the left-hand end of the water channel. For the Spawner XP Farm, tap the spawner standing in front of the farm with the spawn egg you are given: the spawner moves into the sealed dark room, and the mobs it makes are washed down to the gap at the front. The Wool Farm's sheep needs the grass around it to keep growing back, so leave the pen floor as grass. The Railway comes with a minecart: place it on the first rail, climb in and push forward.
+**Redstone Contraptions** are placed in front of you like other builds. For the Bubble Elevator, open the door at the bottom, step in and float up; at the top, walk out onto the landing behind the tower, and use the magma shaft (if you added one) to come down, stepping out of its door quickly because magma is hot. The Firework Launcher fires when you press the button on the end of the row. The Sugar Cane Farm harvests by itself; collect from the chest at the left-hand end of the water channel. The Spawner XP Farm's spawner is already set and sealed in the dark room, and the mobs it makes are washed down to the gap at the front. The Wool Farm's sheep needs the grass around it to keep growing back, so leave the pen floor as grass. The Railway comes with a minecart: place it on the first rail, climb in and push forward. The Pumpkin & Melon Farm's stems take a while to grow; ripe fruit is knocked off by the pistons and ends up in the chest in the pit at the right-hand end. The Egg Collector's chickens lay into the chest at the front. The Kelp Farm's chests are at both ends; smelt kelp into dried kelp to eat, or craft dried kelp blocks for fuel. At the Fishing Spot, stand on the seat, face the pool and fish as normal; when your inventory is full, catches fall into the chest under the seat. Press the Doorbell's button to hear its tune. The Secret Door starts open: flip the lever in the nook beside the doorway (there is one on each side) to slide the wall shut, and flip it back to open it. In the Trading Hall, trade with each villager through the window above its counter; its workstation is behind it so it can restock.
+
+### Copy and paste
+Open **🏗️ Builder Tools** ➔ **📋 Copy & Paste**. Stand on the ground at one corner of a build and choose **Mark Corner 1**, walk to the opposite corner and choose **Mark Corner 2**, then **Copy Between the Corners** and choose how tall the copy should be. The copy includes the ground you marked. Stand where you want it and choose **Paste in Front of Me**; you can turn it a quarter, half or three-quarter turn. Your copy is saved in the world, so it is still there next time. **↩️ Undo Last Build** takes a paste away.
+
+### Statues
+**🗿 Place a Statue** places one of the statues that come with the add-on, in front of you. Empty space around a statue leaves the ground alone. To make your own from a photogrammetry scan, a Blender model or a picture, see [`tools/README.md`](tools/README.md).
 
 ### Finding biomes
 Open **📍 Spawn & Teleport** ➔ **🌎 Find Nearest Biome**, pick a biome, and press **🚀 Teleport There Now** in the result window. Choose **✅ Done** instead to just keep the coordinates. The search uses the world seed, so places you have changed may look different from how they were generated. Underground biomes such as Lush Caves and Deep Dark land you near the depth where the biome was found.
@@ -215,7 +232,9 @@ Every player gets their own Helper Device and their own undo. **👥 Teleport to
 | --- | --- |
 | `Behavior_Pack/` | Behavior pack: manifest, the Helper Device item, the furniture block definitions in `blocks/` and `scripts/main.js` |
 | `Resource_Pack/` | Resource pack: manifest, textures, furniture block models in `models/blocks/` and language files |
+| `Behavior_Pack/structures/` | Preset spawner structures (`helpertools/`) and statues (`helpertools_statues/`) |
 | `tests/regression.cjs` | Regression tests that run against a mocked Script API |
+| `tools/` | Generators for the spawner and statue structures, with their own tests and [`README.md`](tools/README.md) |
 | `build.sh` | Packages both packs into the installers |
 | `dist/` | Built installers, committed so players can download them from the repository |
 | `CHANGELOG.md` | Release notes for each version |
@@ -226,6 +245,7 @@ The add-on uses `@minecraft/server` 2.9.0 and `@minecraft/server-ui` 2.0.0.
 
 ```bash
 node tests/regression.cjs   # run the regression tests
+python3 -m unittest discover -s tools -p 'test_*.py'   # statue tool tests
 bash build.sh               # rebuild dist/HelperTools.mcaddon and both .mcpack files
 ```
 
