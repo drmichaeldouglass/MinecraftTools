@@ -3701,8 +3701,13 @@ function createSugarCaneFarmPlan(player, width, cropIndex = 0) {
   q.push(setLocal(c, width + 2, 0, 1, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
   q.push(setLocal(c, 1, 1, 1, "minecraft:water"));
   q.push(fillLocal(c, 1, 1, 2, width, 1, 2, "minecraft:sand"));
-  q.push(fillLocal(c, 1, 2, 2, width, 2, 2, crop.block));
   q.push(fillLocal(c, 1, 1, 3, width, 2, 4, CONTRAPTION_BASE));
+  // Irrigate every planting block before placing the crop. The collection
+  // stream in front takes fluid ticks to reach the far end of the row.
+  q.push(setLocal(c, 0, 1, 3, CONTRAPTION_BASE));
+  q.push(setLocal(c, width + 1, 1, 3, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 1, 1, 3, width, 1, 3, "minecraft:water"));
+  q.push(fillLocal(c, 1, 2, 2, width, 2, 2, crop.block));
   q.push(fillLocal(c, 1, 3, 4, width, 3, 4, CONTRAPTION_BASE));
   for (let x = 1; x <= width; x++) {
     q.push(setLocal(c, x, 3, 3, withBlockStates("minecraft:piston", { facing_direction: PISTON_FACING_CODES[worldDirectionKey(c, 0, -1)] })));
@@ -3790,7 +3795,7 @@ function createRailwayPlan(player, length) {
 /**
  * Monster spawner XP farm. The spawner works in a dark room; water streams
  * flush the mobs into a trench and down a chute into a two-deep pit. The
- * player stands outside and hits their legs through a one-block gap. The room
+ * player stands outside and hits their legs through a half-block gap. The room
  * is sealed, so the empty spawner is built in front of the farm where the
  * player can tap it with the spawn egg; the tap moves it into the room.
  */
@@ -3799,20 +3804,25 @@ function createSpawnerFarmPlan(player) {
   const q = [];
   const stone = "minecraft:stone_bricks";
   q.push(fillLocal(c, 7, 1, 0, 11, 3, 1, "minecraft:air"));
-  q.push(fillLocal(c, 7, 0, 0, 11, 0, 1, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 7, -1, 0, 11, 0, 3, CONTRAPTION_BASE));
   pushLargeFill(q, c, 0, 0, 2, 18, 7, 12, stone);
   q.push(fillLocal(c, 1, 4, 3, 17, 6, 11, "minecraft:air"));
   q.push(fillLocal(c, 1, 3, 3, 17, 3, 3, "minecraft:air"));
   q.push(fillLocal(c, 9, 1, 3, 9, 2, 3, "minecraft:air"));
-  q.push(setLocal(c, 9, 1, 2, "minecraft:air"));
+  // A half-block kill opening exposes their feet without letting baby zombies
+  // through. Hoppers beneath the pit carry the drops to the front chest.
+  q.push(setLocal(c, 9, 1, 2, withBlockStates("minecraft:smooth_stone_slab", { "minecraft:vertical_half": "top" })));
+  q.push(setLocal(c, 9, 0, 3, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 0, -1), toggle_bit: false })));
+  q.push(setLocal(c, 9, 0, 2, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 0, -1), toggle_bit: false })));
+  q.push(setLocal(c, 9, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 1, 0), toggle_bit: false })));
+  q.push(setLocal(c, 10, 0, 1, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
   q.push(fillLocal(c, 1, 4, 11, 17, 4, 11, "minecraft:water"));
   q.push(setLocal(c, 1, 3, 3, "minecraft:water"));
   q.push(setLocal(c, 17, 3, 3, "minecraft:water"));
   q.push(setLocal(c, 9, 1, 0, "minecraft:mob_spawner"));
   q.push(setLocal(c, 7, 1, 1, "minecraft:lantern"));
   q.push(setLocal(c, 11, 1, 1, "minecraft:lantern"));
-  q.push(setLocal(c, 10, 1, 0, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, -1, 0) })));
-  const plan = makePlan(player, "Spawner XP Farm", c, q, localBounds(c, 0, 0, 0, 18, 7, 12));
+  const plan = makePlan(player, "Spawner XP Farm", c, q, localBounds(c, 0, -1, 0, 18, 7, 12));
   plan.batchSize = CONTRAPTION_BATCH_SIZE;
   plan.spawner = { from: localPoint(c, 9, 1, 0), to: localPoint(c, 9, 5, 7) };
   return plan;

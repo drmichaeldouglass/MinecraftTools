@@ -1,6 +1,6 @@
 # 🪄 Helper Tools: a Minecraft Bedrock Add-On
 
-**Current version: 1.4.2** · Requires Minecraft Bedrock **1.26.40 or newer** · No experiments needed
+**Current version: 1.4.5** · Requires Minecraft Bedrock **1.26.40 or newer** · No experiments needed
 
 Helper Tools gives every player a **Helper Device**, a glowing magic wand. Use it and a colourful menu opens with one-tap helpers: change the time or weather, heal up, escape from a cave, gain superpowers, summon tame pets, teleport to friends or biomes, and build anything from a simple hole to a whole furnished village, a glowing beacon, a sphere or a swimming pool. Builder tools show a glowing 3D preview in the world before anything changes, and the last build can be undone.
 
@@ -161,7 +161,7 @@ Houses, the village and the city are furnished with the add-on's own furniture b
 
 Shapes rest on the ground at your feet and start one block in front of you, so stand back from where you want the middle to be. Large hollow spheres and cones are placed over a few seconds. A **Beacon** only shines when nothing solid is straight above it, so leave **Clear the sky** on unless you are already outdoors. After it is built, tap the beacon block to pick its power.
 
-The **Spawner XP Farm** needs one step from you: walk in, tap the spawner with the spawn egg the device gives you, then stand at the gap outside and hit the mobs' legs. The **Flood Wheat Farm** is harvested by pressing the button at the back; press it again to take the water back, then replant.
+The **Spawner XP Farm** needs one step from you: tap the spawner in front of the farm with the spawn egg the device gives you, then stand at the half-block gap outside and hit the mobs' legs. Drops collect in the recessed chest beside the gap. The **Flood Wheat Farm** is harvested by pressing the button at the back; press it again to take the water back, then replant.
 
 The **Swimming Pool** is dug into the ground in front of you, so stand on flat land at the level you want the deck. **Drain Water & Lava** clears a cube around you; water from outside the cube can flow back in, so drain a little wider than the pond you want gone.
 

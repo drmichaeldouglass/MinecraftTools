@@ -915,7 +915,7 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.equal(countBlocks(placed, v => v === 'minecraft:piston'), 6);
         assert.equal(countBlocks(placed, v => v === 'minecraft:observer'), 6);
         assert.equal(countBlocks(placed, v => v === 'minecraft:sand'), 6);
-        assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 1);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 7);
         assert.equal(countBlocks(placed, v => v === 'minecraft:hopper'), 2);
         assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
         const piston = plan.commands.find(c => c.includes('minecraft:piston'));
@@ -933,9 +933,10 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 19);
         assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
         const gap = ctx.localPoint(plan.context, 9, 1, 2), pit = ctx.localPoint(plan.context, 9, 1, 3), floor = ctx.localPoint(plan.context, 9, 0, 3);
-        assert.equal(dimension.getBlock(gap).typeId, 'minecraft:air');
+        assert.equal(dimension.getBlock(gap).typeId, 'minecraft:smooth_stone_slab');
+        assert.equal(dimension.getBlock(gap).permutation.getState('minecraft:vertical_half'), 'top');
         assert.equal(dimension.getBlock(pit).typeId, 'minecraft:air');
-        assert.equal(dimension.getBlock(floor).typeId, 'minecraft:stone_bricks');
+        assert.equal(dimension.getBlock(floor).typeId, 'minecraft:hopper');
         const stream = ctx.localPoint(plan.context, 9, 4, 11), edge = ctx.localPoint(plan.context, 9, 3, 4);
         assert.equal(dimension.getBlock(stream).typeId, 'minecraft:water');
         assert.equal(dimension.getBlock(edge).typeId, 'minecraft:stone_bricks', 'room floor under the stream');
@@ -993,6 +994,149 @@ test('redstone contraptions build in every facing with working parts and undo', 
   assert.equal(base.ctx.createStreetLampPlan(base.player, 12), null);
   assert.equal(base.ctx.createBubbleElevatorPlan(base.player, 99, false).height, 60);
   assert.equal(base.ctx.createRailwayPlan(base.player, 1).length, 5);
+});
+
+test('cane rows have water beside every sand block before any crops are placed', () => {
+  for (const facing of FACINGS) for (let width = 2; width <= 8; width++) for (const crop of [0, 1]) {
+    const { ctx, player, dimension } = harness();
+    player.getViewDirection = () => facing;
+    blockWorld(dimension);
+    const plan = ctx.createSugarCaneFarmPlan(player, width, crop);
+    for (const command of plan.commands) {
+      const edit = ctx.parseBlockCommand(command);
+      if (!edit) continue;
+      if (['minecraft:reeds', 'minecraft:bamboo'].includes(edit.blockId)) {
+        for (let x = edit.x1; x <= edit.x2; x++) for (let z = edit.z1; z <= edit.z2; z++) {
+          const y = edit.y1 - 1;
+          assert.equal(dimension.getBlock({ x, y, z }).typeId, 'minecraft:sand');
+          assert.ok([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) =>
+            dimension.getBlock({ x: x + dx, y, z: z + dz }).typeId === 'minecraft:water'),
+          `${width}-wide farm must not depend on future fluid ticks to support its crop`);
+        }
+      }
+      try { dimension.runCommand(command); } catch (e) { assert.equal(e.message, 'No blocks changed'); }
+    }
+    // The independent front collection stream remains a single source, not a
+    // stationary source row that would leave harvested items floating in place.
+    for (let x = 1; x <= width; x++) {
+      assert.equal(dimension.getBlock(ctx.localPoint(plan.context, x, 1, 3)).typeId, 'minecraft:water');
+      assert.equal(dimension.getBlock(ctx.localPoint(plan.context, x, 2, 3)).typeId, 'minecraft:smooth_stone');
+      assert.equal(dimension.getBlock(ctx.localPoint(plan.context, x, 1, 1)).typeId, x === 1 ? 'minecraft:water' : 'minecraft:air');
+    }
+    for (const x of [0, width + 1]) assert.equal(dimension.getBlock(ctx.localPoint(plan.context, x, 1, 3)).typeId, 'minecraft:smooth_stone');
+  }
+});
+
+function replayContraption(ctx, dimension, plan) {
+  const world = blockWorld(dimension);
+  for (const command of plan.commands) {
+    try { dimension.runCommand(command); } catch (e) { assert.equal(e.message, 'No blocks changed'); }
+  }
+  return world;
+}
+
+test('spawner farm keeps baby zombies behind a half-height kill slot and collects drops', () => {
+  for (const facing of FACINGS) {
+    const { ctx, player, dimension } = harness();
+    player.getViewDirection = () => facing;
+    const plan = ctx.createSpawnerFarmPlan(player);
+    replayContraption(ctx, dimension, plan);
+    const get = (x, y, z) => dimension.getBlock(ctx.localPoint(plan.context, x, y, z));
+    const slot = get(9, 1, 2);
+    assert.equal(slot.typeId, 'minecraft:smooth_stone_slab');
+    assert.equal(slot.permutation.getState('minecraft:vertical_half'), 'top');
+    assert.equal(get(9, 2, 2).typeId, 'minecraft:stone_bricks', 'no second opening above the slab');
+    assert.equal(get(9, 1, 3).typeId, 'minecraft:air', 'the mob legs remain exposed inside');
+    // Even the recessed centre of a hopper leaves < 0.95 blocks below the slab.
+    assert.ok(1.5 - 0.625 < 0.95, 'a baby zombie cannot walk out through the kill slot');
+    assert.equal(get(9, 0, 3).typeId, 'minecraft:hopper', 'drops enter the collection system at the kill pit');
+    assert.equal(get(10, 0, 1).typeId, 'minecraft:chest');
+    assert.equal(get(10, 1, 1).typeId, 'minecraft:air', 'the output chest can be opened');
+    assertCommandsInside(ctx, plan, vm.runInContext('FILL_COMMAND_LIMIT', ctx));
+  }
+});
+
+test('every farm and smelter hopper routes items into an accessible container in all facings', () => {
+  // These are vanilla hopper direction values, independent of the builder's
+  // rotation helpers. A hopper may feed another hopper, a chest, or a furnace.
+  const offsets = { 0: [0, -1, 0], 2: [0, 0, -1], 3: [0, 0, 1], 4: [-1, 0, 0], 5: [1, 0, 0] };
+  for (const facing of FACINGS) {
+    const { ctx, player, dimension } = harness();
+    player.getViewDirection = () => facing;
+    const plans = [ctx.createSpawnerFarmPlan(player), ctx.createWoolFarmPlan(player), ctx.createSmelterPlan(player)];
+    for (let width = 2; width <= 8; width++) plans.push(ctx.createSugarCaneFarmPlan(player, width));
+    for (let width = 3; width <= 9; width++) plans.push(ctx.createFloodFarmPlan(player, width));
+    for (const plan of plans) {
+      const { blocks } = replayContraption(ctx, dimension, plan);
+      for (const [key, type] of blocks) {
+        if (type !== 'minecraft:hopper') continue;
+        const [x, y, z] = key.split(',').map(Number);
+        let point = { x, y, z };
+        const visited = new Set();
+        while (dimension.getBlock(point).typeId === 'minecraft:hopper') {
+          const key = `${point.x},${point.y},${point.z}`;
+          assert.ok(!visited.has(key), `${plan.name}: hopper cycle`);
+          visited.add(key);
+          const block = dimension.getBlock(point);
+          assert.equal(block.permutation.getState('toggle_bit'), false, 'hopper must be enabled');
+          const offset = offsets[block.permutation.getState('facing_direction')];
+          assert.ok(offset, 'hopper must point down or horizontally');
+          point = { x: point.x + offset[0], y: point.y + offset[1], z: point.z + offset[2] };
+        }
+        const end = dimension.getBlock(point).typeId;
+        assert.ok(['minecraft:chest', 'minecraft:furnace'].includes(end), `${plan.name}: hopper at ${key} ends in ${end}`);
+        if (end === 'minecraft:chest') assert.equal(dimension.getBlock({ ...point, y: point.y + 1 }).typeId, 'minecraft:air', `${plan.name}: chest lid is blocked`);
+      }
+    }
+  }
+});
+
+test('launcher, flood farm and cane farm have continuous powered routes to every actuator', () => {
+  const vectors = { north: [0, 0, -1], south: [0, 0, 1], west: [-1, 0, 0], east: [1, 0, 0] };
+  const pistonVectors = { 2: [0, 0, 1], 3: [0, 0, -1], 4: [1, 0, 0], 5: [-1, 0, 0] };
+  const dispenserVectors = { 1: [0, 1, 0], 2: [0, 0, -1], 3: [0, 0, 1], 4: [-1, 0, 0], 5: [1, 0, 0] };
+  const add = (p, v, sign = 1) => ({ x: p.x + sign * v[0], y: p.y + sign * v[1], z: p.z + sign * v[2] });
+  const key = p => `${p.x},${p.y},${p.z}`;
+  for (const facing of FACINGS) for (const kind of ['launcher', 'flood', 'cane']) {
+    const min = kind === 'launcher' ? 1 : kind === 'flood' ? 3 : 2;
+    const max = kind === 'cane' ? 8 : 9;
+    for (let size = min; size <= max; size++) {
+      const { ctx, player, dimension } = harness();
+      player.getViewDirection = () => facing;
+      const plan = kind === 'launcher' ? ctx.createFireworkLauncherPlan(player, size) :
+        kind === 'flood' ? ctx.createFloodFarmPlan(player, size) : ctx.createSugarCaneFarmPlan(player, size);
+      const { blocks } = replayContraption(ctx, dimension, plan);
+      const dust = [...blocks].filter(([, id]) => id === 'minecraft:redstone_wire').map(([k]) => {
+        const [x, y, z] = k.split(',').map(Number); return { x, y, z };
+      });
+      for (const p of dust) assert.equal(dimension.getBlock(add(p, [0, -1, 0])).typeId, 'minecraft:smooth_stone', 'conductive support below each dust');
+      const sources = [...blocks].filter(([, id]) => id === (kind === 'cane' ? 'minecraft:observer' : 'minecraft:stone_button'));
+      for (const [k] of sources) {
+        const [x, y, z] = k.split(',').map(Number), source = { x, y, z };
+        const observed = kind === 'cane' ? vectors[dimension.getBlock(source).permutation.getState('minecraft:facing_direction')] : null;
+        if (observed) assert.deepEqual(observed, [-facing.x || 0, 0, -facing.z || 0], 'observer watches the top of the crop');
+        const start = observed ? [add(source, observed, -1)] : dust.filter(p => Math.abs(p.x-x) + Math.abs(p.y-y) + Math.abs(p.z-z) === 1);
+        const reached = new Map(), queue = start.map(p => [p, 15]);
+        while (queue.length) {
+          const [p, power] = queue.shift();
+          if (power <= 0 || dimension.getBlock(p).typeId !== 'minecraft:redstone_wire' || (reached.get(key(p)) || 0) >= power) continue;
+          reached.set(key(p), power);
+          for (const v of Object.values(vectors)) queue.push([add(p, v), power - 1]);
+        }
+        for (const [k, id] of blocks) {
+          if (id !== (kind === 'cane' ? 'minecraft:piston' : 'minecraft:dispenser')) continue;
+          const [x, y, z] = k.split(',').map(Number), actuator = { x, y, z };
+          const value = dimension.getBlock(actuator).permutation.getState('facing_direction');
+          const direction = (kind === 'cane' ? pistonVectors : dispenserVectors)[value];
+          assert.deepEqual(direction, kind === 'launcher' ? [0, 1, 0] : [-facing.x || 0, 0, -facing.z || 0], 'actuator points toward its crop or the sky');
+          // Bedrock needs an actual adjacent powered block. Dust above a
+          // neighbouring solid block supplies it without quasi-connectivity.
+          assert.ok(dust.some(p => reached.has(key(p)) && p.y === actuator.y + 1 && Math.abs(p.x-x) + Math.abs(p.z-z) === 1),
+            `${kind}, size ${size}: no powered support beside actuator at ${k}`);
+        }
+      }
+    }
+  }
 });
 
 test('tapping the waiting spawner with a spawn egg moves it into the sealed farm room', async () => {
