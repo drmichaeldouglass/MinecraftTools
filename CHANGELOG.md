@@ -2,6 +2,14 @@
 
 Release notes for the Helper Tools add-on, newest first. Each release bumps both pack manifests so Minecraft recognises the update.
 
+## Version 1.4.5 fixes
+
+- **Spawner XP Farm:** replaced the full-block kill opening with an upper slab, leaving a half-block gap for attacking mobs while keeping baby zombies inside. The previously unconnected chest is now fed by three hoppers below the kill pit, and its lid is clear. The undo bounds include the added foundation.
+- **Sugar Cane / Bamboo Farm:** added a sealed irrigation row under the pistons and placed it before the crops. Every stalk now has water beside its sand immediately, without depending on the front collection stream reaching the far end during construction. The collection stream and harvesting circuit remain separate from irrigation.
+- Updated the README's release number and spawner setup instructions. Both manifests and all three rebuilt installers are version 1.4.5. Existing contraptions must be rebuilt to get the new layouts.
+
+Validation: all 70 mocked Script API regression tests pass. New checks cover irrigation at the moment crops are planted for every width and rotation, the spawner kill opening and collection inlet, hopper routes to accessible chests/furnaces for every farm width and rotation, and continuous wiring from each observer/button to every piston/dispenser for all launcher/cane/flood sizes and rotations. The irrigation and kill-opening checks fail against the previous script. The upper-slab state was checked against Microsoft's vanilla block-state documentation. These are layout and mocked API checks, not Minecraft physics simulation. In a disposable Minecraft world, verify repeated cane harvests, baby-zombie containment and drop collection at the spawner farm, repeated flood-and-retract cycles, and wool regrowth/shearing. Also exercise both automatic-door triggers, the elevator in both directions, all launcher dispensers, the railway, night lamps, smelting, water-source refill, and repeated cobblestone generation. Keep farms loaded; hostile spawners need non-Peaceful difficulty and the sheep needs mob griefing enabled to change its grass block.
+
 ## Version 1.4.4 fixes
 
 - **Spawner XP Farm:** the spawner was built inside a sealed room, so there was no way to reach it with the spawn egg, even though the message said to walk in. The empty spawner is now built in front of the farm. Tap it with the spawn egg and the add-on moves it into the dark room (with `/clone`, which keeps the mob you chose). If the world is reloaded before you tap it, the spawner still moves when you do.
