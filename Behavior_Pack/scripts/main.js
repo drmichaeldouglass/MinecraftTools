@@ -6076,6 +6076,7 @@ const STRUCTURE_ROTATIONS = [
 
 // @generated statues begin (tools/model_to_structure.py)
 const STATUES = [
+  { name: "Rubber Duck", structure: "helpertools_statues:rubber_duck", size: [11, 12, 16] }
 ];
 // @generated statues end
 
