@@ -20,7 +20,7 @@ The Helper Device menu has seven sections.
 | 🏗️ **Builder Tools** | Dig, fill, flatten, platforms, houses, a whole village or city, shapes and beacons, swimming pools, draining water and lava, redstone contraptions, bridges, stairs, torches, cleanup, undo |
 | 📍 **Spawn & Teleport** | Set and return to spawn, teleport to players, find biomes and structures, go to coordinates |
 | 🐾 **Pets & Companions** | Tame dog, cat, parrot, saddled horse, iron golem, axolotl |
-| ✨ **Enchant & Armour** | Enchant the item in your hand, full armour sets, enchanted tool kits, armour trim kits |
+| ✨ **Enchant & Armour** | Enchant any item you carry or wear, full armour sets, enchanted tool kits, armour trim kits |
 
 ### 🎮 Game Modes & Time
 - ☀️ **Set Daytime** and 🌙 **Set Nighttime**
@@ -74,7 +74,7 @@ Every teleport loads the destination first and puts you on solid ground with hea
 - 🐕 Tamed dog, 🐈 tamed cat, 🦜 tamed parrot, 🐴 tamed horse with a saddle, 🦾 iron golem bodyguard and 🦎 axolotl.
 
 ### ✨ Enchant & Armour
-- ✨ **Enchant Item in Hand**: hold any enchantable item, pick from the enchantments it can take and a level up to the normal maximum, or add every compatible enchantment at its top level in one go.
+- ✨ **Enchant an Item**: pick a tool, weapon or piece of armour from your hotbar, inventory, armour slots or off hand (you keep holding the Helper Device), then pick from the enchantments it can take and a level up to the normal maximum, or add every compatible enchantment at its top level in one go.
 - 🛡️ **Full Armour Set**: leather, chainmail, iron, gold, diamond or netherite, optionally enchanted (Protection IV, Unbreaking III, Mending, Respiration, Aqua Affinity, Thorns, Swift Sneak, Feather Falling IV, Depth Strider) and equipped into empty armour slots. Existing armour and Elytra stay equipped; the remaining pieces go into your inventory, or drop at your feet if it is full.
 - ⚒️ **Enchanted Tool Kit**: sword, pickaxe, axe, shovel and bow in your chosen material, optionally enchanted (Sharpness V, Looting III, Efficiency V, Fortune III, Silk Touch, Power V, Infinity, Unbreaking III, Mending).
 - 🎨 **Armour Trim Kit**: choose one of the 18 trim patterns and a trim material (iron, copper, gold, lapis, emerald, diamond, netherite, redstone, amethyst, quartz or resin). Minecraft gives add-ons no way to apply a trim directly, so the device hands you the smithing templates, the material and a smithing table: put a template, an armour piece and the material in the table's three slots to apply it.

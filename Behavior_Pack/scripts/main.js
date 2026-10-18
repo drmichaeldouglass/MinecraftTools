@@ -5054,19 +5054,57 @@ function applyEnchantments(item, pairs) {
   return count;
 }
 
-/** The item in the player's main hand and a function that writes it back. */
-function getHeldItem(player) {
+// Armour and off-hand slots the enchanting picker looks in, after the inventory.
+const WORN_SLOTS = [
+  { slot: "Head", label: "Worn on your head" },
+  { slot: "Chest", label: "Worn on your body" },
+  { slot: "Legs", label: "Worn on your legs" },
+  { slot: "Feet", label: "Worn on your feet" },
+  { slot: "Offhand", label: "In your off hand" }
+];
+
+/**
+ * Everything the player carries or wears that can take another enchantment,
+ * except the Helper Device. Each entry re-reads its slot and writes back to it,
+ * so the item can be enchanted while the device is in the player's hand.
+ */
+function getEnchantableItems(player) {
+  const found = [];
+  const consider = (label, read, save) => {
+    let item;
+    try { item = read(); } catch (e) { return; }
+    if (!item || item.typeId === ITEM_ID) return;
+    try { if (!item.getComponent("enchantable")) return; } catch (e) { return; }
+    if (!ENCHANTMENT_OPTIONS.some((option) => canEnchant(item, option.id))) return;
+    found.push({ item, label, read, save });
+  };
+  try {
+    const inventory = player.getComponent("inventory");
+    const container = inventory && inventory.container;
+    if (container) {
+      for (let i = 0; i < container.size; i++) {
+        const label = i < 9 ? `Hotbar slot ${i + 1}` : `Inventory row ${Math.floor((i - 9) / 9) + 1}, slot ${((i - 9) % 9) + 1}`;
+        consider(label, () => container.getItem(i), (item) => container.setItem(i, item));
+      }
+    }
+  } catch (e) {}
   try {
     const equippable = player.getComponent("equippable");
     if (equippable && typeof equippable.getEquipment === "function") {
-      return { item: equippable.getEquipment("Mainhand"), save: (item) => equippable.setEquipment("Mainhand", item) };
+      for (const { slot, label } of WORN_SLOTS) {
+        consider(label, () => equippable.getEquipment(slot), (item) => equippable.setEquipment(slot, item));
+      }
     }
   } catch (e) {}
-  const inventory = player.getComponent("inventory");
-  const container = inventory && inventory.container;
-  const slot = player.selectedSlotIndex !== undefined ? player.selectedSlotIndex : player.selectedSlot;
-  if (!container || slot === undefined) return { item: undefined, save: () => {} };
-  return { item: container.getItem(slot), save: (item) => container.setItem(slot, item) };
+  return found;
+}
+
+function enchantmentCount(item) {
+  try {
+    return item.getComponent("enchantable").getEnchantments().length;
+  } catch (e) {
+    return 0;
+  }
 }
 
 /** Fills an empty armour slot, or gives the item without replacing existing gear. */
@@ -5098,8 +5136,8 @@ function itemDisplayName(item) {
 function openEnchantMenu(player) {
   const form = new ActionFormData()
     .title("✨ Enchant & Armour")
-    .body("Enchant what you are holding, or get a whole kit:")
-    .button("✨ Enchant Item in Hand\n§7Pick an enchantment and level for the held item", "textures/items/book_enchanted")
+    .body("Enchant something you carry or wear, or get a whole kit:")
+    .button("✨ Enchant an Item\n§7Pick a tool, weapon or armour you carry or wear", "textures/items/book_enchanted")
     .button("🛡️ Full Armour Set\n§7Helmet to boots, optionally enchanted and equipped", "textures/items/diamond_chestplate")
     .button("⚒️ Enchanted Tool Kit\n§7Sword, pickaxe, axe, shovel and bow", "textures/items/diamond_pickaxe")
     .button("🎨 Armour Trim Kit\n§7Templates, material and a smithing table", "textures/items/netherite_upgrade_smithing_template")
@@ -5107,7 +5145,7 @@ function openEnchantMenu(player) {
   form.show(player).then((response) => {
     if (response.canceled) return;
     switch (response.selection) {
-      case 0: openEnchantHeldItemMenu(player); break;
+      case 0: openEnchantItemPicker(player); break;
       case 1: openArmourSetMenu(player); break;
       case 2: openToolKitMenu(player); break;
       case 3: openTrimKitMenu(player); break;
@@ -5116,49 +5154,68 @@ function openEnchantMenu(player) {
   }).catch((e) => console.error("Enchant menu error: " + e));
 }
 
-function openEnchantHeldItemMenu(player) {
-  const held = getHeldItem(player);
-  if (!held.item) {
-    player.sendMessage("§eHold the item you want to enchant in your main hand, then open this tool again.§r");
+function openEnchantItemPicker(player) {
+  const choices = getEnchantableItems(player);
+  if (!choices.length) {
+    player.sendMessage("§eNothing you are carrying or wearing can take an enchantment. Put a tool, weapon or piece of armour in your inventory, then open this tool again.§r");
     return;
   }
-  const options = ENCHANTMENT_OPTIONS.filter((option) => canEnchant(held.item, option.id));
+  const form = new ActionFormData()
+    .title("✨ Enchant an Item")
+    .body("Pick the item to enchant. You can keep holding the Helper Device.");
+  for (const choice of choices) {
+    const name = itemDisplayName(choice.item).replace(/\b\w/g, (c) => c.toUpperCase());
+    const count = enchantmentCount(choice.item);
+    form.button(`${name}\n§7${choice.label}${count ? ` · ${count} enchantment${count === 1 ? "" : "s"}` : ""}`);
+  }
+  form.button("⬅️ Back\n§7Return to Enchant & Armour", "textures/ui/arrow_left");
+  form.show(player).then((response) => {
+    if (response.canceled) return;
+    const choice = choices[response.selection];
+    if (choice) openEnchantItemMenu(player, choice);
+    else openEnchantMenu(player);
+  }).catch((e) => console.error("Enchant item picker error: " + e));
+}
+
+function openEnchantItemMenu(player, choice) {
+  const options = ENCHANTMENT_OPTIONS.filter((option) => canEnchant(choice.item, option.id));
   if (!options.length) {
-    player.sendMessage(`§eYour ${itemDisplayName(held.item)} cannot take any more enchantments.§r`);
+    player.sendMessage(`§eYour ${itemDisplayName(choice.item)} cannot take any more enchantments.§r`);
     return;
   }
   const form = new ModalFormData()
-    .title("✨ Enchant Item in Hand")
-    .dropdown(`Enchantment for your ${itemDisplayName(held.item)}:`, options.map((o) => `${o.name} (up to ${LEVEL_NUMERALS[enchantmentTopLevel(o.id) - 1] || enchantmentTopLevel(o.id)})`), { defaultValueIndex: 0 })
+    .title("✨ Enchant an Item")
+    .dropdown(`Enchantment for your ${itemDisplayName(choice.item)}:`, options.map((o) => `${o.name} (up to ${LEVEL_NUMERALS[enchantmentTopLevel(o.id) - 1] || enchantmentTopLevel(o.id)})`), { defaultValueIndex: 0 })
     .dropdown("Level:", LEVEL_NUMERALS, { defaultValueIndex: 4 })
     .toggle("🌟 Instead, add every enchantment it can take at the top level", { defaultValue: false });
   form.show(player).then((response) => {
     if (response.canceled) return;
     const [optionIndex, levelIndex, everything] = response.formValues;
-    const current = getHeldItem(player);
-    if (!current.item || current.item.typeId !== held.item.typeId) {
-      player.sendMessage("§eYou changed what you are holding. Hold the item and try again.§r");
+    let current;
+    try { current = choice.read(); } catch (e) {}
+    if (!current || current.typeId !== choice.item.typeId) {
+      player.sendMessage(`§eYour ${itemDisplayName(choice.item)} is no longer where it was. Open the enchanting menu and pick it again.§r`);
       return;
     }
     let added = 0;
     const names = [];
     if (everything) {
       for (const option of options) {
-        if (applyEnchantment(current.item, option.id, enchantmentTopLevel(option.id))) { added++; names.push(option.name); }
+        if (applyEnchantment(current, option.id, enchantmentTopLevel(option.id))) { added++; names.push(option.name); }
       }
     } else {
       const option = options[optionIndex] || options[0];
       const level = Math.min(Number(levelIndex) + 1, enchantmentTopLevel(option.id));
-      if (applyEnchantment(current.item, option.id, level)) { added++; names.push(`${option.name} ${LEVEL_NUMERALS[level - 1]}`); }
+      if (applyEnchantment(current, option.id, level)) { added++; names.push(`${option.name} ${LEVEL_NUMERALS[level - 1]}`); }
     }
     if (!added) {
       player.sendMessage("§eThat enchantment could not be added (it may clash with one already on the item).§r");
       return;
     }
-    current.save(current.item);
-    player.sendMessage(`§a✨ Added ${names.join(", ")} to your ${itemDisplayName(current.item)}!§r`);
+    choice.save(current);
+    player.sendMessage(`§a✨ Added ${names.join(", ")} to your ${itemDisplayName(current)}!§r`);
     player.playSound("random.anvil_use", { volume: 0.8, pitch: 1.4 });
-  }).catch((e) => console.error("Enchant held item error: " + e));
+  }).catch((e) => console.error("Enchant item error: " + e));
 }
 
 function giveArmourSet(player, materialIndex, enchant, equip) {

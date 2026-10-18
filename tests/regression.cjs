@@ -1050,48 +1050,132 @@ function enchantingHarness() {
           const id = enchantmentId(e);
           if (e.level < 1 || e.level > e.type.maxLevel) throw new Error('bad level');
           list.push({ type: id, level: e.level });
-        }
+        },
+        getEnchantments: () => list.slice()
       };
     }
   }
   ctx.ItemStack = MockItem;
   const equipment = {};
   const inventory = [];
+  // Inventory slots return copies, as the native container does, so an
+  // enchantment only sticks if the script writes the item back.
+  const slots = new Array(36).fill(undefined);
+  const copy = item => {
+    if (!item) return undefined;
+    const clone = new MockItem(item.typeId, item.amount);
+    clone.enchantments = item.enchantments.slice();
+    if (item.nameTag) clone.nameTag = item.nameTag;
+    return clone;
+  };
   player.getComponent = name => {
     if (name === 'equippable') return { getEquipment: slot => equipment[slot], setEquipment: (slot, item) => { equipment[slot] = item; return true; } };
-    if (name === 'inventory') return { container: { addItem: item => { inventory.push(item); return undefined; } } };
+    if (name === 'inventory') return { container: { size: slots.length, getItem: i => copy(slots[i]), setItem: (i, item) => { slots[i] = copy(item); }, addItem: item => { inventory.push(item); return undefined; } } };
     return undefined;
   };
-  return { ...h, MockItem, equipment, inventory };
+  return { ...h, MockItem, equipment, inventory, slots };
 }
 
-test('enchanting the held item applies the chosen level, caps at the top level, or adds everything compatible', async () => {
-  const { ctx, player, tick, MockItem, equipment } = enchantingHarness();
-  const all = vm.runInContext('ENCHANTMENT_OPTIONS', ctx);
-  equipment.Mainhand = new MockItem('minecraft:diamond_sword');
-  modalForm(ctx, [], [all.findIndex(o => o.id === 'sharpness'), 4, false]);
-  ctx.openEnchantHeldItemMenu(player);
+function pickerForm(ctx, picks) {
+  const shown = [];
+  ctx.ActionFormData = class {
+    constructor() { this.buttons = []; shown.push(this); }
+    title(t) { this.titleText = t; return this; } body() { return this; }
+    button(label) { this.buttons.push(label); return this; }
+    show() { const selection = picks.shift(); return Promise.resolve(selection === undefined ? { canceled: true } : { canceled: false, selection }); }
+  };
+  return shown;
+}
+
+test('the enchanting picker lists carried and worn items while the device is in hand', async () => {
+  const { ctx, player, tick, MockItem, equipment, slots } = enchantingHarness();
+  const device = new MockItem('tools:helper_device');
+  device.getComponent = () => undefined;
+  slots[0] = device;
+  equipment.Mainhand = device;
+  slots[2] = new MockItem('minecraft:diamond_sword');
+  slots[3] = new MockItem('minecraft:dirt', 64);
+  slots[20] = new MockItem('minecraft:bow');
+  equipment.Head = new MockItem('minecraft:iron_helmet');
+  equipment.Head.enchantments.push({ type: 'protection', level: 4 });
+  const shown = pickerForm(ctx, []);
+  ctx.openEnchantItemPicker(player);
   await tick();
-  assert.equal(JSON.stringify(equipment.Mainhand.enchantments), JSON.stringify([{ type: 'sharpness', level: 5 }]));
+  const buttons = shown[0].buttons;
+  assert.equal(buttons.length, 4, buttons.join(' | '));
+  assert.ok(buttons[0].startsWith('Diamond Sword\n') && buttons[0].includes('Hotbar slot 3'), buttons[0]);
+  assert.ok(buttons[1].startsWith('Bow\n') && buttons[1].includes('Inventory row 2, slot 3'), buttons[1]);
+  assert.ok(buttons[2].startsWith('Iron Helmet\n') && buttons[2].includes('head') && buttons[2].includes('1 enchantment'), buttons[2]);
+  assert.ok(buttons[3].includes('Back'));
+  assert.ok(!buttons.some(b => /device|dirt/i.test(b)));
+});
+
+test('enchanting a picked item applies the chosen level, caps at the top level, or adds everything compatible', async () => {
+  const { ctx, player, tick, MockItem, equipment, slots } = enchantingHarness();
+  const all = vm.runInContext('ENCHANTMENT_OPTIONS', ctx);
+  const device = new MockItem('tools:helper_device');
+  device.getComponent = () => undefined;
+  slots[0] = device;
+  equipment.Mainhand = device;
+  slots[4] = new MockItem('minecraft:diamond_sword');
+  pickerForm(ctx, [0]);
+  modalForm(ctx, [], [all.findIndex(o => o.id === 'sharpness'), 4, false]);
+  ctx.openEnchantItemPicker(player);
+  await tick();
+  assert.equal(JSON.stringify(slots[4].enchantments), JSON.stringify([{ type: 'sharpness', level: 5 }]), 'written back to the slot');
+  assert.equal(slots[0], device, 'the device is untouched');
   assert.ok(player.messages.some(m => m.includes('Sharpness') && m.includes(' V')), player.messages.join('\n'));
   const remaining = all.filter(o => o.id !== 'sharpness');
+  pickerForm(ctx, [0]);
   modalForm(ctx, [], [remaining.findIndex(o => o.id === 'mending'), 4, false]);
-  ctx.openEnchantHeldItemMenu(player);
+  ctx.openEnchantItemPicker(player);
   await tick();
-  assert.equal(equipment.Mainhand.enchantments[1].level, 1, 'mending is capped at I');
+  assert.equal(slots[4].enchantments[1].level, 1, 'mending is capped at I');
+  pickerForm(ctx, [0]);
   modalForm(ctx, [], [0, 0, true]);
-  ctx.openEnchantHeldItemMenu(player);
+  ctx.openEnchantItemPicker(player);
   await tick();
-  const ids = equipment.Mainhand.enchantments.map(e => e.type);
+  const ids = slots[4].enchantments.map(e => e.type);
   assert.ok(ids.includes('looting') && ids.includes('unbreaking') && !ids.includes('smite') && !ids.includes('infinity'), ids.join(' '));
-  assert.ok(equipment.Mainhand.enchantments.every(e => e.level === all.find(o => o.id === e.type).max));
-  player.messages.length = 0;
-  equipment.Mainhand = undefined;
-  ctx.openEnchantHeldItemMenu(player);
-  assert.ok(player.messages.some(m => m.includes('Hold the item')));
-  equipment.Mainhand = new MockItem('minecraft:dirt');
-  ctx.openEnchantHeldItemMenu(player);
-  assert.ok(player.messages.some(m => m.includes('cannot take')));
+  assert.ok(slots[4].enchantments.every(e => e.level === all.find(o => o.id === e.type).max));
+
+  equipment.Feet = new MockItem('minecraft:diamond_boots');
+  const shown = pickerForm(ctx, [0]);
+  modalForm(ctx, [], [0, 0, true]);
+  ctx.openEnchantItemPicker(player);
+  await tick();
+  assert.ok(shown[0].buttons[0].startsWith('Diamond Boots\n'), 'a sword that cannot take more enchantments is not offered');
+  assert.ok(equipment.Feet.enchantments.some(e => e.type === 'feather_falling' && e.level === 4), 'worn boots are enchanted in place');
+});
+
+test('the enchanting picker explains when nothing can be enchanted or the item moved', async () => {
+  const { ctx, player, tick, MockItem, equipment, slots } = enchantingHarness();
+  const device = new MockItem('tools:helper_device');
+  device.getComponent = () => undefined;
+  slots[0] = device;
+  equipment.Mainhand = device;
+  slots[1] = new MockItem('minecraft:dirt');
+  const shown = pickerForm(ctx, []);
+  ctx.openEnchantItemPicker(player);
+  await tick();
+  assert.equal(shown.length, 0);
+  assert.ok(player.messages.some(m => m.includes('Nothing you are carrying')), player.messages.join('\n'));
+  slots[5] = new MockItem('minecraft:diamond_pickaxe');
+  pickerForm(ctx, [0]);
+  ctx.ModalFormData = class {
+    title() { return this; } dropdown() { return this; } toggle() { return this; }
+    show() { slots[5] = undefined; return Promise.resolve({ canceled: false, formValues: [0, 0, true] }); }
+  };
+  ctx.openEnchantItemPicker(player);
+  await tick();
+  assert.ok(player.messages.some(m => m.includes('no longer where it was')), player.messages.join('\n'));
+  slots[5] = new MockItem('minecraft:diamond_pickaxe');
+  let backTitle;
+  ctx.openEnchantMenu = () => { backTitle = 'enchant menu'; };
+  pickerForm(ctx, [1]);
+  ctx.openEnchantItemPicker(player);
+  await tick();
+  assert.equal(backTitle, 'enchant menu', 'Back returns to Enchant & Armour');
 });
 
 test('armour sets, tool kits and trim kits hand over the right items', () => {
