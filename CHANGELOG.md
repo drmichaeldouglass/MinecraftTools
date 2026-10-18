@@ -2,6 +2,13 @@
 
 Release notes for the Helper Tools add-on, newest first. Each release bumps both pack manifests so Minecraft recognises the update.
 
+## Version 1.4.3 fixes
+
+- **Enchant Item in Hand** could never work: the menu only opens while you hold the Helper Device, so the device was always the "item in hand" and the menu said it could not take any enchantments. The button is now **✨ Enchant an Item** and opens a picker listing every enchantable item in your hotbar, inventory, armour slots and off hand, with where it is and how many enchantments it already has. The device, items that cannot be enchanted and items that cannot take any more enchantments are left out. The chosen item is enchanted where it is, so worn armour stays on.
+- Both manifests and all three rebuilt installers are version 1.4.3.
+
+Validation: all 65 mocked Script API regression tests pass. The enchanting tests now open the menu with the device in hand, as in the game, and the mocked inventory returns copies so an enchantment only counts if it is written back to its slot. Minecraft is not available in this environment, so check in a disposable Minecraft world that the picker lists your items and that enchanting a hotbar item, an inventory item and worn armour works.
+
 ## Version 1.4.2 fixes
 
 - Doors now use the `minecraft:cardinal_direction` block state. Bedrock replaced the old integer `direction` state on doors in 1.21.60, and this pack requires 1.26.40, so every door command was being rejected. That stopped every house design, starter template, the village, the city, the automatic door and the bubble elevator part-way through the build. Each door keeps the orientation the old state gave it.
