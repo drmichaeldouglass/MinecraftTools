@@ -1,4 +1,4 @@
-import { world, system, ItemStack, BiomeTypes, BlockVolume, EnchantmentTypes } from "@minecraft/server";
+import { world, system, ItemStack, BiomeTypes, BlockVolume, BlockPermutation, EnchantmentTypes } from "@minecraft/server";
 import { ActionFormData, ModalFormData, MessageFormData } from "@minecraft/server-ui";
 
 const ITEM_ID = "tools:helper_device";
@@ -1268,6 +1268,59 @@ function describeBlockAt(dimension, parsed) {
   }
 }
 
+// World offset from a bed's foot to its head for each Bedrock `direction` value.
+const BED_HEAD_OFFSETS = { 0: [0, 1], 1: [-1, 0], 2: [0, -1], 3: [1, 0] };
+
+/** Block states parsed from a command, with the booleans and integers typed as the Script API wants them. */
+function typedBlockStates(states) {
+  const typed = {};
+  for (const [key, value] of Object.entries(states || {})) {
+    typed[key] = value === "true" ? true : value === "false" ? false : /^-?\d+$/.test(value) ? Number(value) : value;
+  }
+  return typed;
+}
+
+/**
+ * Sets one block through the Script API, which skips the placement rules a
+ * setblock command applies. Returns false when the block cannot be set that
+ * way (API not available, chunk not loaded, unknown block or state).
+ */
+function placeBlockDirectly(dimension, location, blockId, states) {
+  if (typeof BlockPermutation === "undefined" || !BlockPermutation || typeof BlockPermutation.resolve !== "function") return false;
+  try {
+    const block = dimension.getBlock(location);
+    if (!block || typeof block.setPermutation !== "function") return false;
+    block.setPermutation(BlockPermutation.resolve(blockId, typedBlockStates(states)));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Places a refused setblock through the Script API. The game turns down the
+ * second half of a bed ("the game placed no blocks for setblock ... minecraft:bed",
+ * leaving air) because a bed half cannot be placed next to a bed that is already
+ * there, so that half is set directly, and the first half is put back should the
+ * refused command have removed it.
+ */
+function placeSetblockDirectly(dimension, parsed) {
+  if (!parsed || parsed.isFill || parsed.mode !== "replace") return false;
+  const location = { x: parsed.x1, y: parsed.y1, z: parsed.z1 };
+  if (!placeBlockDirectly(dimension, location, parsed.blockId, parsed.states)) return false;
+  if (parsed.blockId === "minecraft:bed" && parsed.states && BED_HEAD_OFFSETS[parsed.states.direction]) {
+    const [dx, dz] = BED_HEAD_OFFSETS[parsed.states.direction];
+    const isHead = parsed.states.head_piece_bit === "true";
+    const other = { x: location.x + (isHead ? -dx : dx), y: location.y, z: location.z + (isHead ? -dz : dz) };
+    let otherBlock = null;
+    try { otherBlock = dimension.getBlock(other); } catch (e) { otherBlock = null; }
+    if (!blockMatches(otherBlock, "minecraft:bed", null)) {
+      placeBlockDirectly(dimension, other, "minecraft:bed", { ...parsed.states, head_piece_bit: isHead ? "false" : "true" });
+    }
+  }
+  return true;
+}
+
 // How many times a failed fill is halved and retried before the build stops.
 const FILL_SPLIT_DEPTH = 6;
 
@@ -1308,10 +1361,14 @@ async function runBlockCommand(dimension, command, splitDepth = 0) {
     failure = err;
   }
   // When the game reports that nothing changed, the blocks are already there or
-  // the command was refused, and the block type tells those apart. Two-part
-  // blocks such as beds and doors get their other half from the game, so the
-  // second half's own command changes nothing, and its states are not compared.
+  // the command was refused, and the block type tells those apart. When a
+  // two-part block such as a door gets its other half from the game, the second
+  // half's own command changes nothing, so its states are not compared.
   if (blockCommandIsSatisfied(dimension, command, unchanged)) return { successCount: 0 };
+  // A setblock the game refuses outright (the second half of a bed) is set
+  // through the Script API instead, which has no placement rules.
+  const parsed = parseBlockCommand(command);
+  if (parsed && !parsed.isFill && placeSetblockDirectly(dimension, parsed) && blockCommandIsSatisfied(dimension, command, true)) return { successCount: 1 };
   const halves = splitDepth < FILL_SPLIT_DEPTH ? splitFillCommand(command) : null;
   if (!halves) throw failure;
   for (const half of halves) await runBlockCommand(dimension, half, splitDepth + 1);
@@ -2010,7 +2067,11 @@ class VillageBuilder {
     if (this.furniture) this.set(x, y, z, this.furnitureBlock("computer", dx, dz));
     else this.set(x, y, z, "minecraft:lectern");
   }
-  /** Two-block bed with the foot at (x, z) and the head one block towards (dx, dz). */
+  /**
+   * Two-block bed with the foot at (x, z) and the head one block towards (dx, dz).
+   * A setblock places only one half, and the game refuses the second half's own
+   * setblock, so runBlockCommand sets that half through the Script API.
+   */
   bed(x, y, z, dx, dz) {
     const code = BED_DIRECTION_CODES[worldDirectionKey(this.c, dx, dz)];
     this.set(x, y, z, withBlockStates("minecraft:bed", { direction: code, head_piece_bit: false, occupied_bit: false }));

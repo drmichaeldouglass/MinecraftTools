@@ -348,7 +348,10 @@ function blockWorld(dimension) {
     const key = `${x},${y},${z}`;
     const typeId = blocks.get(key) || (y < 64 ? 'minecraft:stone' : 'minecraft:air');
     const blockStates = states.get(key) || {};
-    return { typeId, isAir:typeId === 'minecraft:air', permutation:{ getState: name => blockStates[name] } };
+    return {
+      typeId, isAir:typeId === 'minecraft:air', permutation:{ getState: name => blockStates[name] },
+      setPermutation(permutation) { blocks.set(key, permutation.type.id); states.set(key, permutation.getAllStates()); }
+    };
   };
   dimension.runCommand = command => {
     const p = command.split(/\s+/);
@@ -1556,6 +1559,64 @@ test('beds and doors whose second half the game places itself do not stop a buil
   await settle(ctx.executeBuildPlan(player, plan, 'city', 'City done'), tick);
   assert.ok(player.messages.some(m => m.includes('City done')), player.messages.join('\n'));
   assert.ok(auto.size > 50, 'beds and doors were placed in halves');
+});
+
+test('a bed half the game refuses to place is set through the Script API, with its other half', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  const { blocks, states } = blockWorld(dimension);
+  // The Script API types states (booleans and integers), unlike the command text.
+  ctx.BlockPermutation = { resolve: (id, s) => ({ type: { id }, getAllStates: () => ({ ...s }) }) };
+  const place = dimension.runCommand;
+  const headOffsets = { 0: [0, 1], 1: [-1, 0], 2: [0, -1], 3: [1, 0] };
+  let refused = 0;
+  dimension.runCommand = command => {
+    const p = ctx.parseBlockCommand(command);
+    if (p && !p.isFill && p.blockId === 'minecraft:bed') {
+      // Like the game: a setblock places one half only, and a bed half cannot be
+      // placed next to the bed half that is already there. The refused command
+      // reports a zero success count and, at worst, has already cleared the
+      // other half (replacing a bed half removes the whole bed).
+      const [dx, dz] = headOffsets[p.states.direction];
+      const head = p.states.head_piece_bit === 'true';
+      const otherKey = `${p.x1 + (head ? -dx : dx)},${p.y1},${p.z1 + (head ? -dz : dz)}`;
+      if (blocks.get(otherKey) === 'minecraft:bed') {
+        refused++;
+        blocks.delete(otherKey); states.delete(otherKey);
+        blocks.delete(`${p.x1},${p.y1},${p.z1}`); states.delete(`${p.x1},${p.y1},${p.z1}`);
+        return { successCount: 0 };
+      }
+    }
+    return place(command);
+  };
+  const plan = ctx.createVillagePlan(player, 0, true, 'city', true);
+  await settle(ctx.executeBuildPlan(player, plan, 'city', 'City done'), tick);
+  assert.ok(player.messages.some(m => m.includes('City done')), player.messages.join('\n'));
+  assert.ok(refused > 20, 'the game refused the second half of every bed');
+  // Every bed ends up whole: a foot whose head is one block along its direction, and no stray halves.
+  let beds = 0;
+  for (const [key, typeId] of blocks) {
+    if (typeId !== 'minecraft:bed') continue;
+    const s = states.get(key);
+    const [x, y, z] = key.split(',').map(Number);
+    const [dx, dz] = headOffsets[s.direction];
+    const other = s.head_piece_bit === true ? `${x - dx},${y},${z - dz}` : `${x + dx},${y},${z + dz}`;
+    assert.equal(blocks.get(other), 'minecraft:bed', `${key} has its other half`);
+    assert.equal(states.get(other).direction, s.direction, `${key} halves share a direction`);
+    assert.notEqual(states.get(other).head_piece_bit, s.head_piece_bit, `${key} halves differ`);
+    beds++;
+  }
+  assert.ok(beds >= 2 * refused, 'every bed has both halves');
+});
+
+test('a refused setblock that the Script API cannot set either still stops the build', async () => {
+  const { ctx, player, dimension } = harness();
+  blockWorld(dimension);
+  ctx.BlockPermutation = { resolve: () => { throw new Error('unknown block'); } };
+  dimension.runCommand = c => ({ successCount: c.startsWith('setblock 0 64 1') ? 0 : 1 });
+  const plan = { name: 'test', dimensionId: 'minecraft:overworld', bounds: { x1: 0, y1: 64, z1: 0, x2: 1, y2: 64, z2: 1 },
+    commands: ['setblock 0 64 0 minecraft:stone', 'setblock 0 64 1 minecraft:bed ["direction"=1,"head_piece_bit"=true,"occupied_bit"=false]'] };
+  await ctx.executeBuildPlan(player, plan, 'test', 'Done');
+  assert.ok(player.messages.some(m => m.includes('command failed') && m.includes('minecraft:bed')), player.messages.join('\n'));
 });
 
 test('a fill the game turns down that cannot be split stops the build instead of being skipped', async () => {
