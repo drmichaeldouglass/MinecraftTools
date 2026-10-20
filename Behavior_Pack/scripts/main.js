@@ -1224,10 +1224,12 @@ function blockMatches(block, blockId, states) {
 // Commands can fail when their target blocks already have the requested type.
 // Verify the actual result instead of matching localized error text or swallowing
 // failures such as unloaded chunks, invalid block IDs, or height limits.
-function blockCommandIsSatisfied(dimension, command) {
+// `typeOnly` compares block types but not states; see runBlockCommand.
+function blockCommandIsSatisfied(dimension, command, typeOnly = false) {
   const parsed = parseBlockCommand(command);
   if (!parsed) return false;
-  const { x1, y1, z1, x2, y2, z2, blockId, states, mode, filterId, filterStates } = parsed;
+  const { x1, y1, z1, x2, y2, z2, blockId, mode, filterId, filterStates } = parsed;
+  const states = typeOnly ? null : parsed.states;
   try {
     for (let x = x1; x <= x2; x++) for (let y = y1; y <= y2; y++) for (let z = z1; z <= z2; z++) {
       const block = dimension.getBlock({ x, y, z });
@@ -1252,6 +1254,18 @@ function blockCommandIsSatisfied(dimension, command) {
     }
     return true;
   } catch (e) { return false; }
+}
+
+/** Block type and states at the first corner of a parsed command, for error messages. */
+function describeBlockAt(dimension, parsed) {
+  try {
+    const block = dimension.getBlock({ x: parsed.x1, y: parsed.y1, z: parsed.z1 });
+    if (!block) return "an unloaded chunk";
+    const states = block.permutation && typeof block.permutation.getAllStates === "function" ? block.permutation.getAllStates() : null;
+    return states && Object.keys(states).length ? `${block.typeId} ${JSON.stringify(states)}` : block.typeId;
+  } catch (e) {
+    return "an unloaded chunk";
+  }
 }
 
 // How many times a failed fill is halved and retried before the build stops.
@@ -1284,14 +1298,20 @@ function splitFillCommand(command) {
  */
 async function runBlockCommand(dimension, command, splitDepth = 0) {
   let failure;
+  let unchanged = false;
   try {
     const result = await runCommand(dimension, command);
-    if (!(result && result.successCount === 0 && parseBlockCommand(command))) return result;
-    failure = new Error(`the game placed no blocks for "${command}"`);
+    unchanged = Boolean(result && result.successCount === 0 && parseBlockCommand(command));
+    if (!unchanged) return result;
+    failure = new Error(`the game placed no blocks for "${command}" (found ${describeBlockAt(dimension, parseBlockCommand(command))})`);
   } catch (err) {
     failure = err;
   }
-  if (blockCommandIsSatisfied(dimension, command)) return { successCount: 0 };
+  // When the game reports that nothing changed, the blocks are already there or
+  // the command was refused, and the block type tells those apart. Two-part
+  // blocks such as beds and doors get their other half from the game, so the
+  // second half's own command changes nothing, and its states are not compared.
+  if (blockCommandIsSatisfied(dimension, command, unchanged)) return { successCount: 0 };
   const halves = splitDepth < FILL_SPLIT_DEPTH ? splitFillCommand(command) : null;
   if (!halves) throw failure;
   for (const half of halves) await runBlockCommand(dimension, half, splitDepth + 1);

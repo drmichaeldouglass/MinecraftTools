@@ -1529,6 +1529,35 @@ test('city fills the game turns down without an error are retried in pieces, so 
   assert.notEqual(blocks.get('20,70,50'), 'minecraft:oak_leaves', 'the ground clearing removed the tree');
 });
 
+test('beds and doors whose second half the game places itself do not stop a build', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  const { blocks, states } = blockWorld(dimension);
+  const place = dimension.runCommand;
+  // Like the game: the first half of a bed or door also places its other half,
+  // whose own setblock then reports a zero success count without throwing. The
+  // states the game gives that half need not match the command's spelling.
+  const auto = new Set();
+  dimension.runCommand = command => {
+    const p = ctx.parseBlockCommand(command);
+    if (p && !p.isFill && auto.has(`${p.x1},${p.y1},${p.z1}`)) return { successCount: 0 };
+    const result = place(command);
+    if (p && !p.isFill && p.blockId === 'minecraft:bed' && p.states.head_piece_bit === 'false') {
+      const dir = { 0: [0, 1], 1: [-1, 0], 2: [0, -1], 3: [1, 0] }[p.states.direction];
+      const key = `${p.x1 + dir[0]},${p.y1},${p.z1 + dir[1]}`;
+      blocks.set(key, 'minecraft:bed'); states.set(key, {}); auto.add(key);
+    }
+    if (p && !p.isFill && p.blockId.endsWith('_door') && p.states.upper_block_bit === 'false') {
+      const key = `${p.x1},${p.y1 + 1},${p.z1}`;
+      blocks.set(key, p.blockId); states.set(key, {}); auto.add(key);
+    }
+    return result;
+  };
+  const plan = ctx.createVillagePlan(player, 0, true, 'city', true);
+  await settle(ctx.executeBuildPlan(player, plan, 'city', 'City done'), tick);
+  assert.ok(player.messages.some(m => m.includes('City done')), player.messages.join('\n'));
+  assert.ok(auto.size > 50, 'beds and doors were placed in halves');
+});
+
 test('a fill the game turns down that cannot be split stops the build instead of being skipped', async () => {
   const { ctx, player, dimension } = harness();
   blockWorld(dimension);
@@ -1537,7 +1566,7 @@ test('a fill the game turns down that cannot be split stops the build instead of
   const plan = { name: 'test', dimensionId: dimension.id, bounds: previewBounds,
     commands: ['setblock 0 64 1 minecraft:stone', 'setblock 0 65 1 minecraft:stone'] };
   await ctx.executeBuildPlan(player, plan, 'test', 'Completed');
-  assert.ok(player.messages.some(m => m.includes('command failed') && m.includes('placed no blocks')), player.messages.join('\n'));
+  assert.ok(player.messages.some(m => m.includes('command failed') && m.includes('placed no blocks') && m.includes('found minecraft:air')), player.messages.join('\n'));
   assert.ok(!commands.includes('setblock 0 65 1 minecraft:stone'));
 });
 
