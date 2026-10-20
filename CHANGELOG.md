@@ -2,6 +2,14 @@
 
 Release notes for the Helper Tools add-on, newest first. Each release bumps both pack manifests so Minecraft recognises the update.
 
+## Version 1.5.5: summonable trading hall villagers
+
+**Fixed**
+- The Villager Trading Hall still stopped with `Syntax error: Unexpected "minecraft:villager_v2"`. Bedrock does not permit summoning that internal entity identifier. The hall now uses `minecraft:villager`, keeping the job events and counter-facing rotations for all 13 professions.
+- Added a regression test that runs mixed-profession and librarian halls in all four directions against a command mock that rejects internal villager identifiers.
+
+Both manifests and all three rebuilt installers are version 1.5.5. Regression tests use a mocked Script API; check the updated hall in a disposable Minecraft world. Use Undo Last Build to clear a failed hall before rebuilding it.
+
 ## Version 1.5.4: whole beds and a working trading hall
 
 **Fixed**
