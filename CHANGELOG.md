@@ -2,6 +2,16 @@
 
 Release notes for the Helper Tools add-on, newest first. Each release bumps both pack manifests so Minecraft recognises the update.
 
+## Version 1.5.4: whole beds and a working trading hall
+
+**Fixed**
+- 🛏️ Beds in the Modern City (and other builds) came out three blocks long, with a second bed overlapping the first and flickering where the two met. The game's own setblock for a bed half can place a whole bed of its own, one block behind the one asked for. Beds are now always set through the Script API, which places exactly the two halves requested; the setblock command is only used if the Script API cannot set the block.
+- 🏪 The Villager Trading Hall stopped with "Syntax error: Unexpected "minecraft:villager_v2"". The game no longer accepts a spawn event straight after the position in `summon`, so the villagers are now summoned with a yaw and pitch before the job event, each facing its counter.
+
+Both manifests and all three rebuilt installers are version 1.5.4.
+
+Validation: all 93 mocked Script API regression tests pass, including a new one where the game's bed setblock adds a whole extra bed (it fails on 1.5.3) and a check of the new summon command in every facing. Minecraft is not available in this environment, so please build a city and a trading hall in a disposable world. Beds already built by 1.5.3 stay as they are; use Undo Last Build and build again.
+
 ## Version 1.5.3: beds no longer stop the city
 
 **Fixed**
