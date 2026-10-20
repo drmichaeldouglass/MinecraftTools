@@ -1018,7 +1018,7 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.equal(countBlocks(placed, v => v === 'minecraft:sticky_piston'), 2);
         assert.equal(countBlocks(placed, v => v === 'minecraft:lever'), 2);
       } else if (key === 'trading_hall') {
-        assert.equal(plan.commands.filter(c => /^summon minecraft:villager_v2 -?\d+\.5 \d+ -?\d+\.5 (0|90|-90|180) 0 minecraft:become_[a-z]+$/.test(c)).length, 4);
+        assert.equal(plan.commands.filter(c => /^summon minecraft:villager -?\d+\.5 \d+ -?\d+\.5 (0|90|-90|180) 0 minecraft:become_[a-z]+$/.test(c)).length, 4);
         assert.equal(plan.jobs.join(), 'librarian,armorer,toolsmith,weaponsmith');
       } else if (key === 'railway') {
         assert.equal(countBlocks(placed, v => v === 'minecraft:golden_rail'), 3);
@@ -2413,6 +2413,43 @@ test('doorbells play their tune once per press and only for registered buttons',
   assert.ok(timeouts.length > 0, 'rings again once the tune has finished');
 });
 
+test('trading halls finish when Bedrock rejects internal villager summon identifiers', async () => {
+  const professions = ['librarian', 'armorer', 'toolsmith', 'weaponsmith', 'cleric',
+    'farmer', 'fletcher', 'cartographer', 'fisherman', 'butcher', 'leatherworker', 'mason', 'sheperd'];
+  for (const facing of FACINGS) for (const [jobMode, offset] of [[0, 0], [0, 5], [1, 0]]) {
+    const { ctx, player, dimension, tick } = harness();
+    player.getViewDirection = () => facing;
+    player.location = { x: -44, y: 63, z: -20 };
+    // Halls are capped at eight booths. Rotate the job list for a second mixed
+    // hall so every configured profession is exercised without changing that cap.
+    vm.runInContext(`TRADING_JOBS.push(...TRADING_JOBS.splice(0, ${offset}))`, ctx);
+    blockWorld(dimension);
+    const runCommand = dimension.runCommand;
+    const spawned = [];
+    dimension.runCommand = command => {
+      if (command.startsWith('summon ')) {
+        const parts = command.split(/\s+/);
+        // Vanilla villager_v2 has is_summonable:false. The command-facing
+        // villager identifier is summonable; the engine handles the modern mob.
+        if (parts[1] !== 'minecraft:villager') {
+          throw new Error(`Syntax error: Unexpected "${parts[1]}"`);
+        }
+        assert.equal(parts.length, 8, 'position, yaw, pitch and job event');
+        assert.ok(parts.slice(2, 7).every(v => Number.isFinite(Number(v))));
+        const profession = professions[jobMode === 1 ? 0 : offset + spawned.length];
+        assert.equal(parts[7], `minecraft:become_${profession}`);
+        spawned.push(parts);
+      }
+      return runCommand(command);
+    };
+    const plan = ctx.createTradingHallPlan(player, 8, jobMode, true);
+    await settle(ctx.executeBuildPlan(player, plan, 'trading_hall', 'Hall done'), tick);
+    assert.equal(spawned.length, 8, player.messages.join('\n'));
+    assert.ok(player.messages.some(m => m.includes('Hall done')));
+    assert.ok(!player.messages.some(m => m.includes('command failed')));
+  }
+});
+
 test('nether portals refuse the End, and trading halls can be all librarians or empty', () => {
   const { ctx, player } = harness();
   player.dimension = { id: 'minecraft:the_end' };
@@ -2429,7 +2466,7 @@ test('nether portals refuse the End, and trading halls can be all librarians or 
     player.getViewDirection = () => facing;
     const summons = ctx.createTradingHallPlan(player, 2, 0, true).commands.filter(c => c.startsWith('summon'));
     assert.equal(summons.length, 2);
-    for (const c of summons) assert.match(c, new RegExp(`^summon minecraft:villager_v2 \\S+ \\S+ \\S+ ${yaw} 0 minecraft:become_[a-z]+$`));
+    for (const c of summons) assert.match(c, new RegExp(`^summon minecraft:villager \\S+ \\S+ \\S+ ${yaw} 0 minecraft:become_[a-z]+$`));
   }
   const jobs = vm.runInContext('TRADING_JOBS', ctx);
   assert.equal(jobs.length, 13);

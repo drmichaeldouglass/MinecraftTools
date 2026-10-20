@@ -4,7 +4,7 @@
     "name": "Helper Tools (Resource Pack)",
     "description": "Resources and textures for Helper Tools Add-On",
     "uuid": "cce7bd3d-db3a-40fc-8194-6ea82a086fae",
-    "version": [1, 5, 4],
+    "version": [1, 5, 5],
     "min_engine_version": [1, 26, 40]
   },
   "modules": [
@@ -12,7 +12,7 @@
       "description": "Helper Tools Resources",
       "type": "resources",
       "uuid": "a3f2137d-69d7-4843-a5a8-85ad8a81efda",
-      "version": [1, 5, 4]
+      "version": [1, 5, 5]
     }
   ]
 }

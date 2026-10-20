@@ -4418,13 +4418,13 @@ function createTradingHallPlan(player, booths, jobMode = 0, summon = true) {
     q.push(setLocal(c, x, 4, 0, "minecraft:lantern"));
   }
   if (summon) {
-    // The spawn event comes after the yaw and pitch: the game no longer accepts
-    // `summon <entity> <x y z> <event>` and rejects the whole command. Each
-    // villager faces the counter.
+    // Bedrock's summon command uses minecraft:villager. The internal
+    // minecraft:villager_v2 identifier is not summonable. Keep yaw and pitch
+    // before the job event so each villager faces the counter.
     const yaw = Math.round(Math.atan2(c.forwardX, -c.forwardZ) * 180 / Math.PI) || 0;
     for (let i = 0; i < booths; i++) {
       const spot = localPoint(c, 1 + 2 * i, 1, 1);
-      q.push(`summon minecraft:villager_v2 ${spot.x + 0.5} ${spot.y} ${spot.z + 0.5} ${yaw} 0 ${jobs[i].event}`);
+      q.push(`summon minecraft:villager ${spot.x + 0.5} ${spot.y} ${spot.z + 0.5} ${yaw} 0 ${jobs[i].event}`);
     }
   }
   const plan = makePlan(player, "Trading Hall", c, q, localBounds(c, 0, 0, 0, endX, 4, 3));
