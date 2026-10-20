@@ -2,6 +2,16 @@
 
 Release notes for the Helper Tools add-on, newest first. Each release bumps both pack manifests so Minecraft recognises the update.
 
+## Version 1.5.3: beds no longer stop the city
+
+**Fixed**
+- 🏙️ Building the Modern City could still stop with "the game placed no blocks for setblock ... minecraft:bed [... "head_piece_bit"=true ...] (found minecraft:air)". A setblock places only one half of a bed, and the game then refuses the setblock for the other half because a bed half cannot be placed next to a bed that is already there, so the head of every hotel and apartment bed was turned down and the build stopped. 1.5.2 assumed the game had added that half itself, which it does not.
+- When the game refuses a setblock outright, the builder now sets that block through the Script API, which has no placement rules, and puts the first half of a bed back should the refused command have removed it. A block the Script API cannot set either still stops the build with the same message as before.
+
+Both manifests and all three rebuilt installers are version 1.5.3.
+
+Validation: all 92 mocked Script API regression tests pass, including a new one where the game places one bed half per setblock and refuses the second half of every city bed, leaving air; it fails on 1.5.2 with the same error you saw. Minecraft is not available in this environment, so please build the city again in a disposable world and check that the beds are whole.
+
 ## Version 1.5.2: beds and doors no longer stop the city
 
 **Fixed**
