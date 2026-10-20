@@ -2,6 +2,17 @@
 
 Release notes for the Helper Tools add-on, newest first. Each release bumps both pack manifests so Minecraft recognises the update.
 
+## Version 1.5.1: city towers keep their floors
+
+**Fixed**
+- 🏙️ In the Modern City, a tower could be built without its floors, roof and outer wall bands, leaving the furniture, room walls and lift core floating inside a glass frame, and trees could survive the ground clearing. The game can turn down a large fill without reporting an error (for example when part of the 61 × 61 city is in a chunk that is not loaded yet, which is more likely with a low render or simulation distance), and the builder took that as success.
+- Every fill and setblock in a build is now checked against the blocks it should have placed, whether the game reports an error or a zero success count. A fill that did not take is retried in smaller pieces, and if a piece still fails the build stops with a message (Undo still restores the area) instead of finishing with parts missing.
+- Builds and Undo that reach into chunks that are not loaded add a temporary ticking area over the build box, wait for it to load, and remove it afterwards.
+
+Both manifests and all three rebuilt installers are version 1.5.1.
+
+Validation: all 89 mocked Script API regression tests pass, including new tests where the game silently refuses large fills (the terracotta tower's floors and roof are now placed) and where the far side of the city starts unloaded. Minecraft is not available in this environment, so please rebuild the city in a disposable world and check that every tower has its floors and roof.
+
 ## Version 1.5.0: new helpers and machines
 
 **Spawn & Teleport**
