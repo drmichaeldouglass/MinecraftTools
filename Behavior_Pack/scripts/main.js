@@ -1254,12 +1254,101 @@ function blockCommandIsSatisfied(dimension, command) {
   } catch (e) { return false; }
 }
 
-async function runBlockCommand(dimension, command) {
-  try { return await runCommand(dimension, command); }
-  catch (err) {
-    if (!blockCommandIsSatisfied(dimension, command)) throw err;
-    return { successCount: 0 };
+// How many times a failed fill is halved and retried before the build stops.
+const FILL_SPLIT_DEPTH = 6;
+
+/** Two fill commands covering the same box split across its longest side, or null when it cannot be split. */
+function splitFillCommand(command) {
+  const parsed = parseBlockCommand(command);
+  // Hollow and outline fills change shape when split.
+  if (!parsed || !parsed.isFill || parsed.mode === "hollow" || parsed.mode === "outline") return null;
+  const low = [parsed.x1, parsed.y1, parsed.z1];
+  const high = [parsed.x2, parsed.y2, parsed.z2];
+  const spans = high.map((v, i) => v - low[i]);
+  const axis = spans.indexOf(Math.max(...spans));
+  if (spans[axis] === 0) return null;
+  const rest = command.split(/\s+/).slice(7).join(" ");
+  const firstHigh = [...high];
+  const secondLow = [...low];
+  firstHigh[axis] = low[axis] + Math.floor(spans[axis] / 2);
+  secondLow[axis] = firstHigh[axis] + 1;
+  return [`fill ${low.join(" ")} ${firstHigh.join(" ")} ${rest}`, `fill ${secondLow.join(" ")} ${high.join(" ")} ${rest}`];
+}
+
+/**
+ * Runs a fill/setblock and checks it took effect. The game can turn a fill
+ * down without throwing (it reports a zero success count instead), for example
+ * when part of a big box is in a chunk that is not ready yet, so both cases are
+ * checked against the blocks themselves. A failed fill is retried in smaller
+ * pieces before the build gives up.
+ */
+async function runBlockCommand(dimension, command, splitDepth = 0) {
+  let failure;
+  try {
+    const result = await runCommand(dimension, command);
+    if (!(result && result.successCount === 0 && parseBlockCommand(command))) return result;
+    failure = new Error(`the game placed no blocks for "${command}"`);
+  } catch (err) {
+    failure = err;
   }
+  if (blockCommandIsSatisfied(dimension, command)) return { successCount: 0 };
+  const halves = splitDepth < FILL_SPLIT_DEPTH ? splitFillCommand(command) : null;
+  if (!halves) throw failure;
+  for (const half of halves) await runBlockCommand(dimension, half, splitDepth + 1);
+  return { successCount: 1 };
+}
+
+// A temporary ticking area keeps every chunk of a large build loaded while it
+// is built or undone. Bedrock limits one ticking area to 100 chunks.
+const BUILD_AREA_MAX_CHUNKS = 100;
+const BUILD_AREA_LOAD_TICKS = 10;
+const BUILD_AREA_LOAD_ATTEMPTS = 6;
+
+function getBuildAreaName(player) {
+  return `ht_build_${String(player.id).replace(/[^a-zA-Z0-9_]/g, "_")}`;
+}
+
+/** Calls `visit` with one block location in every chunk the box touches; stops early when it returns false. */
+function everyChunkIn(bounds, visit) {
+  for (let cx = Math.floor(bounds.x1 / 16); cx <= Math.floor(bounds.x2 / 16); cx++) {
+    for (let cz = Math.floor(bounds.z1 / 16); cz <= Math.floor(bounds.z2 / 16); cz++) {
+      const location = { x: Math.max(bounds.x1, cx * 16), y: bounds.y1, z: Math.max(bounds.z1, cz * 16) };
+      if (!visit(location)) return false;
+    }
+  }
+  return true;
+}
+
+function isAreaLoaded(dimension, bounds) {
+  if (typeof dimension.getBlock !== "function") return true;
+  return everyChunkIn(bounds, (location) => {
+    try { return Boolean(dimension.getBlock(location)); } catch (e) { return false; }
+  });
+}
+
+/**
+ * Makes sure every chunk of the box is loaded, adding a ticking area when some
+ * are not. Resolves to true when a ticking area was added, which the caller
+ * removes with `removeTickingArea` once it is done.
+ */
+async function loadBuildArea(dimension, bounds, areaName) {
+  if (isAreaLoaded(dimension, bounds)) return false;
+  const chunks = (Math.floor(bounds.x2 / 16) - Math.floor(bounds.x1 / 16) + 1) * (Math.floor(bounds.z2 / 16) - Math.floor(bounds.z1 / 16) + 1);
+  if (chunks > BUILD_AREA_MAX_CHUNKS) return false;
+  try {
+    await runCommand(dimension, `tickingarea add ${bounds.x1} ${bounds.y1} ${bounds.z1} ${bounds.x2} ${bounds.y2} ${bounds.z2} ${areaName} true`);
+  } catch (e) {
+    // The world may already have its ten ticking areas; the build still checks every command.
+    return false;
+  }
+  for (let attempt = 0; attempt < BUILD_AREA_LOAD_ATTEMPTS && !isAreaLoaded(dimension, bounds); attempt++) {
+    await new Promise((resolve) => system.runTimeout(resolve, BUILD_AREA_LOAD_TICKS));
+  }
+  return true;
+}
+
+function removeTickingArea(dimension, areaName) {
+  return runCommand(dimension, `tickingarea remove ${areaName}`).then(() => {}, () => {});
 }
 
 /**
@@ -1284,9 +1373,17 @@ function executeBuildPlanUnlocked(player, plan, actionType, successMessage, soun
   if (!validateBuildBounds(player, plan.bounds)) return;
   player.sendMessage(`§e🏗️ Building ${plan.name}...§r`);
   let snapshotSaved = false;
-  return captureUndoSnapshot(player, plan.bounds, actionType).then(async (record) => {
+  const dimension = player.dimension;
+  const areaName = getBuildAreaName(player);
+  let areaAdded = false;
+  return loadBuildArea(dimension, plan.bounds, areaName).then((added) => {
+    areaAdded = added;
+    return captureUndoSnapshot(player, plan.bounds, actionType);
+  }).then(async (record) => {
     snapshotSaved = true;
     await runBuildCommands(getDimensionById(record.dimensionId), plan.commands, plan.batchSize || 0);
+  }).finally(() => {
+    if (areaAdded) return removeTickingArea(dimension, areaName);
   }).then(() => {
     player.sendMessage(`§a${successMessage}§r`);
     player.playSound(sound, { volume: 1.0, pitch: 1.1 });
@@ -4811,7 +4908,14 @@ function executeUndoUnlocked(player) {
 
   const undoDimension = getDimensionById(lastAction.dimensionId);
   const loadCmd = `structure load ${lastAction.structureName} ${lastAction.bounds.x1} ${lastAction.bounds.y1} ${lastAction.bounds.z1}`;
-  return runCommand(undoDimension, loadCmd).then(async () => {
+  const areaName = getBuildAreaName(player);
+  let areaAdded = false;
+  return loadBuildArea(undoDimension, lastAction.bounds, areaName).then((added) => {
+    areaAdded = added;
+    return runCommand(undoDimension, loadCmd);
+  }).finally(() => {
+    if (areaAdded) return removeTickingArea(undoDimension, areaName);
+  }).then(async () => {
     undoHistory.delete(player.id);
     await runCommand(undoDimension, `structure delete ${lastAction.structureName}`).catch(() => {});
     player.sendMessage("§a↩️ Undid your last build action!§r");
@@ -5250,10 +5354,6 @@ function getTravelAreaName(player) {
   return `ht_travel_${String(player.id).replace(/[^a-zA-Z0-9_]/g, "_")}`;
 }
 
-function removeTravelArea(dimension, areaName) {
-  return runCommand(dimension, `tickingarea remove ${areaName}`).then(() => {}, () => {});
-}
-
 /**
  * Loads the destination first so the landing spot can be worked out before the
  * player moves. `getBlock` throws on unloaded chunks, which is exactly what a
@@ -5307,7 +5407,7 @@ async function teleportToCoordinates(player, coordinates, targetDimension) {
   } catch (err) {
     if (isValidEntity(player)) player.sendMessage(`§cCould not complete travel: ${err}. No unchecked landing will be attempted.§r`);
   } finally {
-    if (areaCreated) await removeTravelArea(dimension, areaName);
+    if (areaCreated) await removeTickingArea(dimension, areaName);
     activeTravels.delete(id);
   }
 }

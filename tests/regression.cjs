@@ -1503,6 +1503,82 @@ test('modern city fits the village snapshot, builds with lifts, towers and furni
   assert.ok(base.ctx.createHouseDesignPlan(base.player, 'cottage', 0).commands.some(c => c.includes('tools:lamp')));
 });
 
+test('city fills the game turns down without an error are retried in pieces, so tower shells and ground clearing still happen', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  const { blocks } = blockWorld(dimension);
+  const place = dimension.runCommand;
+  let refused = 0;
+  // The game reports a zero success count, rather than throwing, for big fills it cannot do.
+  dimension.runCommand = command => {
+    const p = ctx.parseBlockCommand(command);
+    if (p && p.isFill && (p.x2 - p.x1 + 1) * (p.y2 - p.y1 + 1) * (p.z2 - p.z1 + 1) > 2000) { refused++; return { successCount: 0 }; }
+    return place(command);
+  };
+  // A tree standing where the city will go.
+  blocks.set('20,70,50', 'minecraft:oak_leaves');
+  const plan = ctx.createVillagePlan(player, 1, true, 'city', true);
+  await settle(ctx.executeBuildPlan(player, plan, 'city', 'City done'), tick);
+  assert.ok(player.messages.some(m => m.includes('City done')), player.messages.join('\n'));
+  assert.ok(refused > 0, 'some fills were refused');
+  // The terracotta tower is the last lot; its storey slabs and roof come from the shell fill.
+  const shell = plan.commands.find(c => c.endsWith('minecraft:hardened_clay'));
+  const box = ctx.parseBlockCommand(shell);
+  for (const y of [box.y1, box.y1 + 4, box.y2]) {
+    assert.equal(blocks.get(`${box.x1 + 1},${y},${box.z1 + 1}`), 'minecraft:hardened_clay', `slab at y ${y}`);
+  }
+  assert.notEqual(blocks.get('20,70,50'), 'minecraft:oak_leaves', 'the ground clearing removed the tree');
+});
+
+test('a fill the game turns down that cannot be split stops the build instead of being skipped', async () => {
+  const { ctx, player, dimension } = harness();
+  blockWorld(dimension);
+  const commands = [];
+  dimension.runCommand = c => { commands.push(c); return { successCount: c.startsWith('setblock 0 64 1') ? 0 : 1 }; };
+  const plan = { name: 'test', dimensionId: dimension.id, bounds: previewBounds,
+    commands: ['setblock 0 64 1 minecraft:stone', 'setblock 0 65 1 minecraft:stone'] };
+  await ctx.executeBuildPlan(player, plan, 'test', 'Completed');
+  assert.ok(player.messages.some(m => m.includes('command failed') && m.includes('placed no blocks')), player.messages.join('\n'));
+  assert.ok(!commands.includes('setblock 0 65 1 minecraft:stone'));
+});
+
+test('builds and undo load unloaded chunks with a temporary ticking area and remove it afterwards', async () => {
+  const { ctx, player, dimension, tick } = harness();
+  const { blocks } = blockWorld(dimension);
+  const getBlock = dimension.getBlock;
+  const place = dimension.runCommand;
+  let loaded = false;
+  const commands = [];
+  dimension.getBlock = location => {
+    if (!loaded && location.z > 40) throw new Error('LocationInUnloadedChunkError');
+    return getBlock(location);
+  };
+  dimension.runCommand = command => {
+    commands.push(command);
+    if (command.startsWith('tickingarea add')) { loaded = true; return { successCount: 1 }; }
+    if (command.startsWith('tickingarea remove')) { loaded = false; return { successCount: 1 }; }
+    return place(command);
+  };
+  const plan = ctx.createVillagePlan(player, 0, true, 'city', true);
+  await settle(ctx.executeBuildPlan(player, plan, 'city', 'City done'), tick);
+  assert.ok(player.messages.some(m => m.includes('City done')), player.messages.join('\n'));
+  const add = commands.findIndex(c => c.startsWith('tickingarea add'));
+  const save = commands.findIndex(c => c.startsWith('structure save'));
+  const remove = commands.findIndex(c => c.startsWith('tickingarea remove'));
+  assert.ok(add >= 0 && add < save && remove > save, 'the area is loaded before the snapshot and released after the build');
+  const { x1, y1, z1, x2, y2, z2 } = plan.bounds;
+  assert.equal(commands[add], `tickingarea add ${x1} ${y1} ${z1} ${x2} ${y2} ${z2} ${ctx.getBuildAreaName(player)} true`);
+  commands.length = 0;
+  await settle(ctx.executeUndo(player), tick);
+  assert.deepEqual(commands.map(c => c.split(' ').slice(0, 2).join(' ')),
+    ['tickingarea add', 'structure load', 'tickingarea remove', 'structure delete']);
+  // A small build next to the player needs no ticking area.
+  loaded = true;
+  commands.length = 0;
+  await settle(ctx.executeBuildPlan(player, ctx.createBaseTemplatePlan(player, 'simple_house'), 'house', 'Done'), tick);
+  assert.ok(!commands.some(c => c.startsWith('tickingarea')));
+  assert.ok(blocks.size > 0);
+});
+
 test('village and city menu passes layout, furniture and ground choices through', async () => {
   const { ctx, player, tick } = harness();
   let received;
@@ -1632,8 +1708,12 @@ test('draining stops on real failures, reports them, and preserves undo', async 
     assert.equal(completed, false);
     assert.ok(player.messages.some(m => m.includes('command failed')));
     assert.ok(!player.messages.some(m => m.includes('Drained')));
-    assert.equal(commands.filter(c => c.startsWith('fill')).length, 1);
-    await ctx.executeUndo(player);
+    // The failing fill is retried in smaller pieces, all inside its own box, and nothing after it runs.
+    const first = ctx.parseBlockCommand(plan.commands[0]);
+    const fills = commands.filter(c => c.startsWith('fill')).map(c => ctx.parseBlockCommand(c));
+    assert.equal(commands.filter(c => c.startsWith('fill'))[0], plan.commands[0]);
+    assert.ok(fills.every(f => f.x1 >= first.x1 && f.x2 <= first.x2 && f.y1 >= first.y1 && f.y2 <= first.y2 && f.z1 >= first.z1 && f.z2 <= first.z2));
+    await settle(ctx.executeUndo(player), tick);
     assert.ok(commands.some(c => c.startsWith('structure load')));
   }
 });

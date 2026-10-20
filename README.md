@@ -1,6 +1,6 @@
 # 🪄 Helper Tools: a Minecraft Bedrock Add-On
 
-**Current version: 1.5.0** · Requires Minecraft Bedrock **1.26.40 or newer** · No experiments needed
+**Current version: 1.5.1** · Requires Minecraft Bedrock **1.26.40 or newer** · No experiments needed
 
 Helper Tools gives every player a **Helper Device**, a glowing magic wand. Use it and a colourful menu opens with one-tap helpers: change the time or weather, heal up, escape from a cave, gain superpowers, summon tame pets, teleport to friends or biomes, and build anything from a simple hole to a whole furnished village, a glowing beacon, a sphere or a swimming pool. Builder tools show a glowing 3D preview in the world before anything changes, and the last build can be undone.
 
