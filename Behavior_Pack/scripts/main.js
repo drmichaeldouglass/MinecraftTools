@@ -1298,11 +1298,9 @@ function placeBlockDirectly(dimension, location, blockId, states) {
 }
 
 /**
- * Places a refused setblock through the Script API. The game turns down the
- * second half of a bed ("the game placed no blocks for setblock ... minecraft:bed",
- * leaving air) because a bed half cannot be placed next to a bed that is already
- * there, so that half is set directly, and the first half is put back should the
- * refused command have removed it.
+ * Places a setblock through the Script API. A bed half's partner is set too
+ * when it is missing, so a bed is whole whichever half comes first. Used for
+ * every bed (see runBlockCommand) and for any other setblock the game refuses.
  */
 function placeSetblockDirectly(dimension, parsed) {
   if (!parsed || parsed.isFill || parsed.mode !== "replace") return false;
@@ -1350,6 +1348,14 @@ function splitFillCommand(command) {
  * pieces before the build gives up.
  */
 async function runBlockCommand(dimension, command, splitDepth = 0) {
+  // In game, a setblock for a bed half can place a whole bed of its own (head on
+  // the given block, foot one block behind) and then refuse the real head next
+  // to it, which left city beds three blocks long with two overlapping models. Beds are set through the Script API instead, which places exactly
+  // the requested halves; the command is only the fallback.
+  const bed = parseBlockCommand(command);
+  if (bed && !bed.isFill && bed.blockId === "minecraft:bed" && placeSetblockDirectly(dimension, bed) && blockCommandIsSatisfied(dimension, command, true)) {
+    return { successCount: 1 };
+  }
   let failure;
   let unchanged = false;
   try {
@@ -4412,9 +4418,13 @@ function createTradingHallPlan(player, booths, jobMode = 0, summon = true) {
     q.push(setLocal(c, x, 4, 0, "minecraft:lantern"));
   }
   if (summon) {
+    // The spawn event comes after the yaw and pitch: the game no longer accepts
+    // `summon <entity> <x y z> <event>` and rejects the whole command. Each
+    // villager faces the counter.
+    const yaw = Math.round(Math.atan2(c.forwardX, -c.forwardZ) * 180 / Math.PI) || 0;
     for (let i = 0; i < booths; i++) {
       const spot = localPoint(c, 1 + 2 * i, 1, 1);
-      q.push(`summon minecraft:villager_v2 ${spot.x + 0.5} ${spot.y} ${spot.z + 0.5} ${jobs[i].event}`);
+      q.push(`summon minecraft:villager_v2 ${spot.x + 0.5} ${spot.y} ${spot.z + 0.5} ${yaw} 0 ${jobs[i].event}`);
     }
   }
   const plan = makePlan(player, "Trading Hall", c, q, localBounds(c, 0, 0, 0, endX, 4, 3));

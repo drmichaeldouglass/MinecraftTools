@@ -1018,7 +1018,7 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.equal(countBlocks(placed, v => v === 'minecraft:sticky_piston'), 2);
         assert.equal(countBlocks(placed, v => v === 'minecraft:lever'), 2);
       } else if (key === 'trading_hall') {
-        assert.equal(plan.commands.filter(c => /^summon minecraft:villager_v2 -?\d+\.5 \d+ -?\d+\.5 minecraft:become_[a-z]+$/.test(c)).length, 4);
+        assert.equal(plan.commands.filter(c => /^summon minecraft:villager_v2 -?\d+\.5 \d+ -?\d+\.5 (0|90|-90|180) 0 minecraft:become_[a-z]+$/.test(c)).length, 4);
         assert.equal(plan.jobs.join(), 'librarian,armorer,toolsmith,weaponsmith');
       } else if (key === 'railway') {
         assert.equal(countBlocks(placed, v => v === 'minecraft:golden_rail'), 3);
@@ -1561,38 +1561,37 @@ test('beds and doors whose second half the game places itself do not stop a buil
   assert.ok(auto.size > 50, 'beds and doors were placed in halves');
 });
 
-test('a bed half the game refuses to place is set through the Script API, with its other half', async () => {
+test('beds are set through the Script API, so the game never adds a second overlapping bed', async () => {
   const { ctx, player, dimension, tick } = harness();
   const { blocks, states } = blockWorld(dimension);
   // The Script API types states (booleans and integers), unlike the command text.
   ctx.BlockPermutation = { resolve: (id, s) => ({ type: { id }, getAllStates: () => ({ ...s }) }) };
   const place = dimension.runCommand;
   const headOffsets = { 0: [0, 1], 1: [-1, 0], 2: [0, -1], 3: [1, 0] };
-  let refused = 0;
+  let bedCommands = 0;
   dimension.runCommand = command => {
     const p = ctx.parseBlockCommand(command);
     if (p && !p.isFill && p.blockId === 'minecraft:bed') {
-      // Like the game: a setblock places one half only, and a bed half cannot be
-      // placed next to the bed half that is already there. The refused command
-      // reports a zero success count and, at worst, has already cleared the
-      // other half (replacing a bed half removes the whole bed).
+      // Like the game: a bed setblock places a whole bed with its head on the
+      // given block and its foot one block behind, and is refused when that
+      // block is taken. Run on the foot, this made beds three blocks long.
+      bedCommands++;
       const [dx, dz] = headOffsets[p.states.direction];
-      const head = p.states.head_piece_bit === 'true';
-      const otherKey = `${p.x1 + (head ? -dx : dx)},${p.y1},${p.z1 + (head ? -dz : dz)}`;
-      if (blocks.get(otherKey) === 'minecraft:bed') {
-        refused++;
-        blocks.delete(otherKey); states.delete(otherKey);
-        blocks.delete(`${p.x1},${p.y1},${p.z1}`); states.delete(`${p.x1},${p.y1},${p.z1}`);
-        return { successCount: 0 };
-      }
+      const foot = `${p.x1 - dx},${p.y1},${p.z1 - dz}`;
+      if (blocks.get(foot) === 'minecraft:bed') return { successCount: 0 };
+      const at = `${p.x1},${p.y1},${p.z1}`;
+      blocks.set(at, 'minecraft:bed'); states.set(at, { direction: Number(p.states.direction), head_piece_bit: true });
+      blocks.set(foot, 'minecraft:bed'); states.set(foot, { direction: Number(p.states.direction), head_piece_bit: false });
+      return { successCount: 2 };
     }
     return place(command);
   };
   const plan = ctx.createVillagePlan(player, 0, true, 'city', true);
   await settle(ctx.executeBuildPlan(player, plan, 'city', 'City done'), tick);
   assert.ok(player.messages.some(m => m.includes('City done')), player.messages.join('\n'));
-  assert.ok(refused > 20, 'the game refused the second half of every bed');
-  // Every bed ends up whole: a foot whose head is one block along its direction, and no stray halves.
+  assert.equal(bedCommands, 0, 'no bed went through a setblock command');
+  // Every bed is two blocks: a foot whose head is one block along its direction, and no stray halves.
+  const requested = plan.commands.filter(c => c.includes('minecraft:bed ')).length;
   let beds = 0;
   for (const [key, typeId] of blocks) {
     if (typeId !== 'minecraft:bed') continue;
@@ -1605,7 +1604,24 @@ test('a bed half the game refuses to place is set through the Script API, with i
     assert.notEqual(states.get(other).head_piece_bit, s.head_piece_bit, `${key} halves differ`);
     beds++;
   }
-  assert.ok(beds >= 2 * refused, 'every bed has both halves');
+  assert.ok(requested > 40);
+  assert.equal(beds, requested, 'exactly the requested bed halves');
+});
+
+test('a bed half the Script API cannot set falls back to the setblock command', async () => {
+  const { ctx, player, dimension } = harness();
+  const { blocks } = blockWorld(dimension);
+  const commands = [];
+  const place = dimension.runCommand;
+  dimension.runCommand = c => { commands.push(c); return place(c); };
+  const plan = { name: 'test', dimensionId: 'minecraft:overworld', bounds: { x1: 0, y1: 64, z1: 0, x2: 0, y2: 64, z2: 1 },
+    commands: ['setblock 0 64 0 minecraft:bed ["direction"=0,"head_piece_bit"=false,"occupied_bit"=false]',
+      'setblock 0 64 1 minecraft:bed ["direction"=0,"head_piece_bit"=true,"occupied_bit"=false]'] };
+  await ctx.executeBuildPlan(player, plan, 'test', 'Done');
+  assert.ok(player.messages.some(m => m.includes('Done')), player.messages.join('\n'));
+  assert.equal(commands.filter(c => c.includes('minecraft:bed')).length, 2);
+  assert.equal(blocks.get('0,64,0'), 'minecraft:bed');
+  assert.equal(blocks.get('0,64,1'), 'minecraft:bed');
 });
 
 test('a refused setblock that the Script API cannot set either still stops the build', async () => {
@@ -2407,6 +2423,14 @@ test('nether portals refuse the End, and trading halls can be all librarians or 
   const hall = ctx.createTradingHallPlan(player, 3, 1, false);
   assert.equal(hall.jobs.join(), 'librarian,librarian,librarian');
   assert.ok(!hall.commands.some(c => c.startsWith('summon')));
+  // The spawn event follows the yaw and pitch (the game rejects it straight after
+  // the position), and each villager looks back across its counter at the player.
+  for (const [facing, yaw] of [[{x:0,z:1}, 180], [{x:0,z:-1}, 0], [{x:1,z:0}, 90], [{x:-1,z:0}, -90]]) {
+    player.getViewDirection = () => facing;
+    const summons = ctx.createTradingHallPlan(player, 2, 0, true).commands.filter(c => c.startsWith('summon'));
+    assert.equal(summons.length, 2);
+    for (const c of summons) assert.match(c, new RegExp(`^summon minecraft:villager_v2 \\S+ \\S+ \\S+ ${yaw} 0 minecraft:become_[a-z]+$`));
+  }
   const jobs = vm.runInContext('TRADING_JOBS', ctx);
   assert.equal(jobs.length, 13);
   assert.ok(jobs.some(j => j.event === 'minecraft:become_sheperd'), "Mojang's spelling of the shepherd event");
