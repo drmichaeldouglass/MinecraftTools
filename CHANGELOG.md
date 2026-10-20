@@ -2,6 +2,16 @@
 
 Release notes for the Helper Tools add-on, newest first. Each release bumps both pack manifests so Minecraft recognises the update.
 
+## Version 1.5.2: beds and doors no longer stop the city
+
+**Fixed**
+- 🏙️ Building the Modern City (or anything with beds or doors) could stop with "the game placed no blocks for setblock ... minecraft:bed". Placing the first half of a bed or door makes the game add the other half itself, so the second half's own command changes nothing and reports a zero success count. 1.5.1 then compared every block state, and the states the game reports for that half did not match the command's, so it treated a finished bed as a failure.
+- When the game reports that a command changed nothing, the builder now checks only that the right kind of block is there. A refused command still leaves the old block (air, leaves, terrain), so it is still caught and still retried or reported. When a command does fail, the message now says which block was found there.
+
+Both manifests and all three rebuilt installers are version 1.5.2.
+
+Validation: all 90 mocked Script API regression tests pass, including a new one where the game places the second half of every bed and door itself and reports nothing changed for its command; it fails on 1.5.1 with the same error you saw. Minecraft is not available in this environment, so please build the city again in a disposable world.
+
 ## Version 1.5.1: city towers keep their floors
 
 **Fixed**
