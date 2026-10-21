@@ -2,6 +2,19 @@
 
 Release notes for the Helper Tools add-on, newest first. Each release bumps both pack manifests so Minecraft recognises the update.
 
+## Version 1.5.6: farm harvesting and collection fixes
+
+- **Kelp:** observers now watch the third growth block instead of the second block occupied by an extended piston head. This removes that direct feedback path. Replaced the overhead dust staircase with a flat, supported bus behind a glass tank, added a third layer of source water, and kept the surface collection stream above it. Permanent water columns between the plants allow harvested spaces to refill. Kelp is planted after the tank and circuit are complete.
+- **Pumpkins and melons:** moved observers above the stems so they watch growth and attachment changes. They no longer watch the piston head's space or occupy the clearance above fruit soil. Rerouted wiring to the piston supports and added lighting over the stems.
+- **Bamboo and sugar cane:** added hopper minecarts and unloading hoppers beneath the planting row, so drops on the planting blocks can reach the same output chest as the water stream. Dirt replaces falling sand over the rails. Added glass containment and lights directly over the growing tips for night-time and underground use.
+- **Flood wheat:** removed open irrigation trenches across the harvest path. Each dispenser now floods seven continuous farmland blocks into the collection hoppers. Covered irrigation lanes run alongside groups of four crop lanes, including the widest nine-lane farm. Added lighting beside the crops.
+
+Both manifests and all three rebuilt installers are version 1.5.6. Existing farms must be rebuilt to receive these block layouts.
+
+Validation: all 98 mocked Script API regression tests pass. Four new regression groups fail against the previous script and pass with these fixes. Checks cover all four rotations, supported farm sizes, crop variants, observer targets versus piston-head positions, fruit clearance, uninterrupted flood lanes, hydration, hopper routes, planting-row collection, lighting placement, and kelp construction order. Minecraft is not installed in this environment; these checks do not simulate fluid ticks, redstone timing, crop growth or item suction.
+
+In a disposable Minecraft world, check several complete grow/harvest/collect cycles for both bamboo and sugar cane, both fruit crops, and kelp (including a six-plant tank). Confirm that pistons stop between harvests and drops reach the chests. For wheat, test flood/retract/replant on the three- and nine-lane farms; retract the water after collection rather than leaving farmland submerged. Repeat at night with farms loaded.
+
 ## Version 1.5.5: summonable trading hall villagers
 
 **Fixed**
