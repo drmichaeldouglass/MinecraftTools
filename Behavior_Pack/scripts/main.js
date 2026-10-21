@@ -3876,7 +3876,7 @@ function createFireworkLauncherPlan(player, count) {
 }
 
 /**
- * Observer and piston sugar cane farm. Cane grows on sand beside a water
+ * Observer and piston sugar cane farm. Cane grows on dirt beside a water
  * channel; when a stalk reaches three blocks the observer fires the piston,
  * and the water carries the cane to a hopper and chest at the left-hand end
  * (local +x is the player's left).
@@ -3888,15 +3888,24 @@ function createSugarCaneFarmPlan(player, width, cropIndex = 0) {
   const q = [];
   const endX = width + 2;
   q.push(fillLocal(c, 0, 1, 0, endX, 6, 4, "minecraft:air"));
-  q.push(fillLocal(c, 0, 0, 0, endX, 0, 4, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, -2, 0, endX, 0, 4, CONTRAPTION_BASE));
   q.push(fillLocal(c, 0, 1, 0, width + 1, 1, 0, CONTRAPTION_BASE));
   q.push(setLocal(c, 0, 1, 1, CONTRAPTION_BASE));
   q.push(setLocal(c, width + 1, 1, 1, CONTRAPTION_BASE));
   q.push(setLocal(c, width, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 1, 0), toggle_bit: false })));
-  q.push(setLocal(c, width + 1, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 1, 0), toggle_bit: false })));
-  q.push(setLocal(c, width + 2, 0, 1, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
+  q.push(setLocal(c, width + 1, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: FACING_DOWN, toggle_bit: false })));
+  q.push(setLocal(c, width + 1, -1, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 1, 0), toggle_bit: false })));
+  q.push(setLocal(c, endX, -1, 1, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
+  q.push(setLocal(c, endX, 0, 1, "minecraft:air"));
+  // Broken stalks can land on their planting dirt instead of in the stream.
+  // Carts collect through that dirt; the hoppers below unload into the same chest.
+  for (let x = 1; x <= width; x++) {
+    q.push(setLocal(c, x, -1, 2, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 1, 0), toggle_bit: false })));
+  }
+  q.push(setLocal(c, width + 1, -1, 2, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 0, -1), toggle_bit: false })));
+  q.push(fillLocal(c, 1, 0, 2, width, 0, 2, withBlockStates("minecraft:rail", { rail_direction: c.rightX !== 0 ? 1 : 0 })));
   q.push(setLocal(c, 1, 1, 1, "minecraft:water"));
-  q.push(fillLocal(c, 1, 1, 2, width, 1, 2, "minecraft:sand"));
+  q.push(fillLocal(c, 1, 1, 2, width, 1, 2, "minecraft:dirt"));
   q.push(fillLocal(c, 1, 1, 3, width, 2, 4, CONTRAPTION_BASE));
   // Irrigate every planting block before placing the crop. The collection
   // stream in front takes fluid ticks to reach the far end of the row.
@@ -3910,9 +3919,17 @@ function createSugarCaneFarmPlan(player, width, cropIndex = 0) {
     q.push(setLocal(c, x, 4, 3, withBlockStates("minecraft:observer", { "minecraft:facing_direction": facingName(c, 0, -1), powered_bit: false })));
     q.push(setLocal(c, x, 4, 4, "minecraft:redstone_wire"));
   }
+  q.push(fillLocal(c, 0, 2, 0, width + 1, 5, 0, "minecraft:glass"));
+  for (const x of [0, width + 1]) q.push(fillLocal(c, x, 2, 1, x, 5, 2, "minecraft:glass"));
+  // Light the growing tips, including at night and when built underground.
+  q.push(fillLocal(c, 1, 5, 2, width, 5, 2, "minecraft:sea_lantern"));
   q.push(setLocal(c, 0, 1, 4, "minecraft:lantern"));
   q.push(setLocal(c, width + 1, 1, 4, "minecraft:lantern"));
-  const plan = makePlan(player, `${crop.label} farm`, c, q, localBounds(c, 0, 0, 0, endX, 6, 4));
+  for (let x = 1; x <= width; x++) {
+    const cart = localPoint(c, x, 0, 2);
+    q.push(`summon minecraft:hopper_minecart ${cart.x + 0.5} ${cart.y} ${cart.z + 0.5}`);
+  }
+  const plan = makePlan(player, `${crop.label} farm`, c, q, localBounds(c, 0, -2, 0, endX, 6, 4));
   plan.batchSize = CONTRAPTION_BATCH_SIZE;
   plan.width = width;
   plan.crop = crop.label;
@@ -4034,35 +4051,42 @@ function createSpawnerFarmPlan(player, mobIndex = 0) {
  */
 function createFloodFarmPlan(player, width) {
   width = clampNumber(Math.round(width), 3, 9);
-  const c = createOrientedBuildContext(player, width + 2, 11, -1);
+  // Four crop lanes per strip, with a covered irrigation lane on its side.
+  // No open water holes may interrupt the seven-block harvest run.
+  const cropXs = Array.from({ length: width }, (_, i) => i + 1 + Math.floor(i / 4));
+  const fieldWidth = cropXs[cropXs.length - 1];
+  const endX = fieldWidth + 1;
+  const c = createOrientedBuildContext(player, endX + 1, 11, -1);
   const q = [];
-  const endX = width + 1;
   q.push(fillLocal(c, 0, 1, 0, endX, 4, 10, "minecraft:air"));
   q.push(fillLocal(c, 0, -1, 0, endX, 0, 10, CONTRAPTION_BASE));
-  q.push(fillLocal(c, 0, 1, 0, width, 1, 0, CONTRAPTION_BASE));
-  q.push(fillLocal(c, 0, 1, 1, 0, 1, 8, CONTRAPTION_BASE));
+  q.push(fillLocal(c, 0, 1, 0, fieldWidth, 1, 0, CONTRAPTION_BASE));
   q.push(fillLocal(c, endX, 1, 1, endX, 1, 8, CONTRAPTION_BASE));
-  for (let x = 1; x <= width; x++) q.push(setLocal(c, x, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 1, 0), toggle_bit: false })));
+  for (let x = 1; x <= fieldWidth; x++) q.push(setLocal(c, x, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 1, 0), toggle_bit: false })));
   q.push(setLocal(c, endX, 0, 1, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, 0, -1), toggle_bit: false })));
   q.push(setLocal(c, endX, 0, 0, withBlockStates("minecraft:chest", { "minecraft:cardinal_direction": facingName(c, 0, -1) })));
+  for (let x = 0; x < fieldWidth; x += 5) {
+    q.push(fillLocal(c, x, 0, 2, x, 0, 8, "minecraft:water"));
+    q.push(fillLocal(c, x, 1, 1, x, 1, 8, CONTRAPTION_BASE));
+  }
   const farmland = withBlockStates("minecraft:farmland", { moisturized_amount: 7 });
   const wheat = withBlockStates("minecraft:wheat", { growth: 7 });
-  q.push(fillLocal(c, 1, 0, 2, width, 0, 4, farmland));
-  q.push(fillLocal(c, 1, 1, 2, width, 1, 4, wheat));
-  q.push(fillLocal(c, 1, 0, 5, width, 0, 5, "minecraft:water"));
-  q.push(fillLocal(c, 1, 0, 6, width, 0, 7, farmland));
-  q.push(fillLocal(c, 1, 1, 6, width, 1, 7, wheat));
-  q.push(fillLocal(c, 1, 0, 8, width, 0, 8, "minecraft:water"));
+  for (const x of cropXs) {
+    q.push(fillLocal(c, x, 0, 2, x, 0, 8, farmland));
+    q.push(fillLocal(c, x, 1, 2, x, 1, 8, wheat));
+  }
   // Dust needs its supporting blocks in place before it is placed.
   q.push(fillLocal(c, 1, 1, 10, endX, 1, 10, CONTRAPTION_BASE));
-  for (let x = 1; x <= width; x++) {
+  for (const x of cropXs) {
     q.push(setLocal(c, x, 1, 9, withBlockStates("minecraft:dispenser", { facing_direction: facingCode(c, 0, -1), triggered_bit: false })));
-    q.push(setLocal(c, x, 2, 10, "minecraft:redstone_wire"));
   }
+  q.push(fillLocal(c, 1, 2, 10, fieldWidth, 2, 10, "minecraft:redstone_wire"));
   q.push(setLocal(c, endX, 2, 10, withBlockStates("minecraft:stone_button", { facing_direction: FACING_UP, button_pressed_bit: false })));
-  q.push(setLocal(c, 0, 2, 4, "minecraft:lantern"));
-  q.push(setLocal(c, endX, 2, 4, "minecraft:lantern"));
-  for (let x = 1; x <= width; x++) {
+  // Leave the crop space open but provide enough light for every strip at night.
+  for (let x = 0; x < fieldWidth; x += 5) {
+    for (const z of [3, 7]) q.push(setLocal(c, x, 2, z, "minecraft:sea_lantern"));
+  }
+  for (const x of cropXs) {
     const point = localPoint(c, x, 1, 9);
     q.push(`replaceitem block ${point.x} ${point.y} ${point.z} slot.container 0 minecraft:water_bucket 1`);
   }
@@ -4176,9 +4200,9 @@ function createWaterSourcePlan(player) {
 
 /**
  * Pumpkin or melon farm. Each unit is a stem on watered farmland with its
- * fruit spot on dirt in front, an observer above the fruit spot and a piston
- * beside it. When fruit grows the observer powers the dust line along the
- * top, every piston fires, and the broken fruit lands on the dirt. A hopper
+ * fruit spot on dirt in front, an observer above the stem and a piston beside
+ * the fruit. Stem updates power the top dust bus; the piston head never enters
+ * the observed space, and the fruit has two blocks of clear growth space. A hopper
  * minecart under each dirt block picks it up (Bedrock carts collect items
  * lying on the block above their rail) and hoppers carry it to a chest in a
  * pit at the end.
@@ -4208,13 +4232,18 @@ function createFruitFarmPlan(player, units, cropIndex = 0) {
     q.push(setLocal(c, px, 1, 3, CONTRAPTION_BASE));
     q.push(setLocal(c, px, 1, 2, withBlockStates("minecraft:piston", { facing_direction: PISTON_FACING_CODES[worldDirectionKey(c, 1, 0)] })));
     q.push(setLocal(c, px, 2, 2, CONTRAPTION_BASE));
+    q.push(setLocal(c, px, 2, 3, CONTRAPTION_BASE));
     q.push(setLocal(c, fx, -1, 2, withBlockStates("minecraft:rail", { rail_direction: railDirection })));
     q.push(setLocal(c, fx, 0, 2, "minecraft:dirt"));
     q.push(setLocal(c, fx, 0, 3, withBlockStates("minecraft:farmland", { moisturized_amount: 7 })));
     q.push(setLocal(c, fx, 1, 3, crop.stem));
-    q.push(setLocal(c, fx, 2, 2, withBlockStates("minecraft:observer", { "minecraft:facing_direction": "down", powered_bit: false })));
+    // Watch the stem's growth/attachment changes rather than the fruit space,
+    // which is also occupied by an extended piston head and would retrigger it.
+    q.push(setLocal(c, fx, 2, 3, withBlockStates("minecraft:observer", { "minecraft:facing_direction": "down", powered_bit: false })));
   }
-  q.push(fillLocal(c, 1, 3, 2, 2 * units, 3, 2, "minecraft:redstone_wire"));
+  q.push(fillLocal(c, 1, 3, 3, 2 * units, 3, 3, "minecraft:redstone_wire"));
+  for (let u = 0; u < units; u++) q.push(setLocal(c, 1 + 2 * u, 3, 2, "minecraft:redstone_wire"));
+  q.push(fillLocal(c, 1, 4, 3, 2 * units, 4, 3, "minecraft:sea_lantern"));
   q.push(setLocal(c, 0, 1, 1, "minecraft:lantern"));
   q.push(setLocal(c, endX, 2, 2, "minecraft:lantern"));
   for (let u = 0; u < units; u++) {
@@ -4257,12 +4286,10 @@ function createEggCollectorPlan(player, chickens) {
 }
 
 /**
- * Kelp farm. Kelp grows in water columns that alternate with plain water
- * columns, so when a piston breaks the kelp's second block, the water it
- * leaves behind has a source on each side and turns back into a source the
- * kelp can grow into again. Each kelp column has its own observer, piston and
- * dust (not shared, so neighbours never fire together). The broken kelp floats
- * up into a stream that runs from the middle to hoppers and chests at both ends.
+ * Kelp grows in a source-water tank with permanent source columns between
+ * plants. Observers watch the third kelp block and a flat dust bus behind
+ * them powers the second-block pistons. Drops float into the stream above
+ * the tank and fall into collection hoppers at both ends.
  */
 function createKelpFarmPlan(player, plants) {
   plants = clampNumber(Math.round(plants), 1, 6);
@@ -4273,8 +4300,8 @@ function createKelpFarmPlan(player, plants) {
   const q = [];
   q.push(fillLocal(c, 0, 1, 0, endX, 5, 4, "minecraft:air"));
   q.push(fillLocal(c, 0, -1, 0, endX, 0, 4, CONTRAPTION_BASE));
-  q.push(fillLocal(c, 0, 1, 1, endX, 3, 3, CONTRAPTION_BASE));
-  q.push(fillLocal(c, first - 1, 1, 2, last + 1, 3, 2, "minecraft:air"));
+  q.push(fillLocal(c, 0, 1, 1, endX, 4, 3, "minecraft:glass"));
+  q.push(fillLocal(c, first - 1, 1, 2, last + 1, 4, 2, "minecraft:air"));
   for (const [x, dx] of [[first - 1, -1], [last + 1, 1]]) {
     q.push(setLocal(c, x, 2, 2, withBlockStates("minecraft:hopper", { facing_direction: FACING_DOWN, toggle_bit: false })));
     q.push(setLocal(c, x, 1, 2, withBlockStates("minecraft:hopper", { facing_direction: facingCode(c, dx, 0), toggle_bit: false })));
@@ -4282,21 +4309,23 @@ function createKelpFarmPlan(player, plants) {
     q.push(setLocal(c, x + dx, 2, 2, "minecraft:air"));
     q.push(setLocal(c, x + dx, 1, 1, "minecraft:air"));
   }
-  q.push(fillLocal(c, first, 1, 2, last, 2, 2, "minecraft:water"));
+  // All supports precede dust. The entire power path stays behind the glass
+  // tank, clear of its water and the floating drops.
+  q.push(fillLocal(c, first + 1, 2, 0, last - 1, 2, 0, CONTRAPTION_BASE));
   for (let k = 0; k < plants; k++) {
     const x = first + 1 + 2 * k;
     q.push(setLocal(c, x, 0, 2, "minecraft:sand"));
-    q.push(setLocal(c, x, 1, 2, withBlockStates("minecraft:kelp", { kelp_age: 0 })));
     q.push(setLocal(c, x, 2, 1, withBlockStates("minecraft:piston", { facing_direction: PISTON_FACING_CODES[worldDirectionKey(c, 0, 1)] })));
-    q.push(setLocal(c, x, 2, 3, withBlockStates("minecraft:observer", { "minecraft:facing_direction": facingName(c, 0, -1), powered_bit: false })));
-    q.push(setLocal(c, x, 2, 4, CONTRAPTION_BASE));
-    q.push(setLocal(c, x, 4, 2, CONTRAPTION_BASE));
-    q.push(setLocal(c, x, 3, 4, "minecraft:redstone_wire"));
-    q.push(setLocal(c, x, 4, 3, "minecraft:redstone_wire"));
-    q.push(setLocal(c, x, 5, 2, "minecraft:redstone_wire"));
-    q.push(setLocal(c, x, 4, 1, "minecraft:redstone_wire"));
+    q.push(setLocal(c, x, 3, 1, withBlockStates("minecraft:observer", { "minecraft:facing_direction": facingName(c, 0, 1), powered_bit: false })));
   }
-  q.push(setLocal(c, middle, 3, 2, "minecraft:water"));
+  q.push(fillLocal(c, first + 1, 3, 0, last - 1, 3, 0, "minecraft:redstone_wire"));
+  q.push(fillLocal(c, first, 1, 2, last, 3, 2, "minecraft:water"));
+  q.push(setLocal(c, middle, 4, 2, "minecraft:water"));
+  q.push(fillLocal(c, first, 5, 2, last, 5, 2, "minecraft:sea_lantern"));
+  // Seed only after the tank is full and every harvesting circuit is complete.
+  for (let k = 0; k < plants; k++) {
+    q.push(setLocal(c, first + 1 + 2 * k, 1, 2, withBlockStates("minecraft:kelp", { kelp_age: 0 })));
+  }
   q.push(setLocal(c, 0, 1, 0, "minecraft:lantern"));
   q.push(setLocal(c, endX, 1, 0, "minecraft:lantern"));
   const plan = makePlan(player, "Kelp Farm", c, q, localBounds(c, 0, -1, 0, endX, 5, 4));

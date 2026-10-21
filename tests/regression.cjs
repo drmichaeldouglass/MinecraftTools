@@ -925,9 +925,10 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.equal(plan.crop, f % 2 ? 'bamboo' : 'sugar cane');
         assert.equal(countBlocks(placed, v => v === 'minecraft:piston'), 6);
         assert.equal(countBlocks(placed, v => v === 'minecraft:observer'), 6);
-        assert.equal(countBlocks(placed, v => v === 'minecraft:sand'), 6);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:dirt'), 6);
         assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 7);
-        assert.equal(countBlocks(placed, v => v === 'minecraft:hopper'), 2);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:hopper'), 10);
+        assert.equal(plan.commands.filter(c => c.startsWith('summon minecraft:hopper_minecart')).length, 6);
         assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
         const piston = plan.commands.find(c => c.includes('minecraft:piston'));
         const observer = plan.commands.find(c => c.includes('minecraft:observer'));
@@ -953,11 +954,11 @@ test('redstone contraptions build in every facing with working parts and undo', 
         assert.equal(dimension.getBlock(edge).typeId, 'minecraft:stone_bricks', 'room floor under the stream');
       } else if (key === 'flood_farm') {
         assert.equal(countBlocks(placed, v => v === 'minecraft:dispenser'), 5);
-        assert.equal(countBlocks(placed, v => v === 'minecraft:hopper'), 6);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:hopper'), 7);
         assert.equal(countBlocks(placed, v => v === 'minecraft:chest'), 1);
-        assert.equal(countBlocks(placed, v => v === 'minecraft:wheat'), 25);
-        assert.equal(countBlocks(placed, v => v === 'minecraft:farmland'), 25);
-        assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 10);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:wheat'), 35);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:farmland'), 35);
+        assert.equal(countBlocks(placed, v => v === 'minecraft:water'), 14);
         assert.equal(countBlocks(placed, v => v === 'minecraft:stone_button'), 1);
         assert.equal(plan.commands.filter(c => /^replaceitem block .* slot\.container 0 minecraft:water_bucket 1$/.test(c)).length, 5);
       } else if (key === 'wool_farm') {
@@ -1039,7 +1040,7 @@ test('redstone contraptions build in every facing with working parts and undo', 
   assert.equal(base.ctx.createRailwayPlan(base.player, 1).length, 5);
 });
 
-test('cane rows have water beside every sand block before any crops are placed', () => {
+test('cane rows have water beside every planting block before any crops are placed', () => {
   for (const facing of FACINGS) for (let width = 2; width <= 8; width++) for (const crop of [0, 1]) {
     const { ctx, player, dimension } = harness();
     player.getViewDirection = () => facing;
@@ -1051,7 +1052,7 @@ test('cane rows have water beside every sand block before any crops are placed',
       if (['minecraft:reeds', 'minecraft:bamboo'].includes(edit.blockId)) {
         for (let x = edit.x1; x <= edit.x2; x++) for (let z = edit.z1; z <= edit.z2; z++) {
           const y = edit.y1 - 1;
-          assert.equal(dimension.getBlock({ x, y, z }).typeId, 'minecraft:sand');
+          assert.equal(dimension.getBlock({ x, y, z }).typeId, 'minecraft:dirt');
           assert.ok([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) =>
             dimension.getBlock({ x: x + dx, y, z: z + dz }).typeId === 'minecraft:water'),
           `${width}-wide farm must not depend on future fluid ticks to support its crop`);
@@ -1843,7 +1844,7 @@ test('flood farm places support blocks before redstone in every facing and width
         placed.set(`${x},${y},${z}`, c.blockId);
       }
     }
-    assert.equal(wires, width);
+    assert.equal(wires, width + Math.floor((width - 1) / 4));
   }
 });
 
@@ -2319,15 +2320,15 @@ test('fruit and kelp farm pistons are powered by their observers, and kelp spots
       const at = (x, y, z) => ctx.localPoint(plan.context, x, y, z);
       for (let u = 0; u < units; u++) {
         const px = 1 + 2 * u, fx = 2 + 2 * u;
-        const observer = dimension.getBlock(at(fx, 2, 2));
-        assert.equal(observer.permutation.getState('minecraft:facing_direction'), 'down', 'observer watches the fruit spot');
+        const observer = dimension.getBlock(at(fx, 2, 3));
+        assert.equal(observer.permutation.getState('minecraft:facing_direction'), 'down', 'observer watches the stem');
         assert.equal(dimension.getBlock(at(fx, 1, 2)).typeId, 'minecraft:air', 'room for the fruit');
         assert.equal(dimension.getBlock(at(fx, 0, 2)).typeId, 'minecraft:dirt');
         // The only free neighbour of the stem is the fruit spot.
         for (const [x, z] of [[fx - 1, 3], [fx + 1, 3], [fx, 4]]) assert.notEqual(dimension.getBlock(at(x, 1, z)).typeId, 'minecraft:air', `stem side ${x},${z}`);
-        const network = dustNetwork(dimension, [at(fx, 3, 2)]);
-        assert.ok(network.has(key(at(px, 3, 2))), `units ${units}: dust above piston ${u} is powered`);
-        assert.equal(dimension.getBlock(at(px, 2, 2)).typeId, 'minecraft:smooth_stone', 'solid block between dust and piston');
+        const network = dustNetwork(dimension, [at(fx, 3, 3)]);
+        assert.ok(network.has(key(at(px, 3, 2))), `units ${units}: dust reaches piston ${u}`);
+        assert.equal(dimension.getBlock(at(px, 2, 2)).typeId, 'minecraft:smooth_stone', 'powered solid block directly above piston');
         const piston = dimension.getBlock(at(px, 1, 2)).permutation.getState('facing_direction');
         const pushes = { 2: [0, 1], 3: [0, -1], 4: [1, 0], 5: [-1, 0] }[piston];
         const towardFruit = [at(fx, 1, 2).x - at(px, 1, 2).x, at(fx, 1, 2).z - at(px, 1, 2).z];
@@ -2342,7 +2343,7 @@ test('fruit and kelp farm pistons are powered by their observers, and kelp spots
       replayContraption(ctx, dimension, plan);
       const at = (x, y, z) => ctx.localPoint(plan.context, x, y, z);
       const middle = plants + 2;
-      assert.equal(dimension.getBlock(at(middle, 3, 2)).typeId, 'minecraft:water', 'stream source in the middle');
+      assert.equal(dimension.getBlock(at(middle, 4, 2)).typeId, 'minecraft:water', 'stream source above the growth tank');
       assert.ok(middle - 1 <= 7 && 2 * plants + 3 - middle <= 7, 'the stream reaches both hoppers');
       for (let k = 0; k < plants; k++) {
         const x = 3 + 2 * k;
@@ -2352,10 +2353,12 @@ test('fruit and kelp farm pistons are powered by their observers, and kelp spots
           assert.equal(dimension.getBlock(at(side, 2, 2)).typeId, 'minecraft:water', 'source water on both sides of the harvest spot');
           assert.notEqual(dimension.getBlock(at(side, 2, 1)).typeId, 'minecraft:piston', 'neighbouring columns are never harvested');
         }
-        const network = dustNetwork(dimension, [at(x, 3, 4)]);
-        assert.ok(network.has(key(at(x, 4, 1))), `plants ${plants}: dust reaches the block above piston ${k}`);
-        assert.equal(network.size, 4, 'each kelp column has its own circuit');
-        assert.equal(dimension.getBlock(at(x, 2, 4)).typeId, 'minecraft:smooth_stone', 'observer output block under the dust');
+        const observer = dimension.getBlock(at(x, 3, 1));
+        assert.equal(observer.permutation.getState('minecraft:facing_direction'), ctx.facingName(plan.context, 0, 1));
+        const network = dustNetwork(dimension, [at(x, 3, 0)]);
+        for (let other = 0; other < plants; other++) assert.ok(network.has(key(at(3 + 2 * other, 3, 0))), 'flat bus reaches every piston support');
+        assert.equal(dimension.getBlock(at(x, 2, 0)).typeId, 'minecraft:smooth_stone', 'powered support directly behind piston');
+        assert.equal(dimension.getBlock(at(x, 3, 2)).typeId, 'minecraft:water', 'observer watches a source-water growth block');
       }
     }
   }
@@ -2471,4 +2474,110 @@ test('nether portals refuse the End, and trading halls can be all librarians or 
   const jobs = vm.runInContext('TRADING_JOBS', ctx);
   assert.equal(jobs.length, 13);
   assert.ok(jobs.some(j => j.event === 'minecraft:become_sheperd'), "Mojang's spelling of the shepherd event");
+});
+
+
+test('farm observers never watch a piston head position or their own wiring', () => {
+  const observerVectors = { north: [0, 0, -1], south: [0, 0, 1], west: [-1, 0, 0], east: [1, 0, 0], down: [0, -1, 0], up: [0, 1, 0] };
+  const pistonVectors = { 2: [0, 0, 1], 3: [0, 0, -1], 4: [1, 0, 0], 5: [-1, 0, 0] };
+  const key = p => `${p.x},${p.y},${p.z}`;
+  const offset = (p, v) => ({ x: p.x + v[0], y: p.y + v[1], z: p.z + v[2] });
+  for (const facing of FACINGS) for (let size = 2; size <= 6; size++) {
+    const { ctx, player, dimension } = harness();
+    player.getViewDirection = () => facing;
+    for (const plan of [ctx.createSugarCaneFarmPlan(player, size, 1), ctx.createFruitFarmPlan(player, size, 0), ctx.createFruitFarmPlan(player, size, 1), ctx.createKelpFarmPlan(player, size)]) {
+      const { blocks } = replayContraption(ctx, dimension, plan);
+      const heads = new Set();
+      for (const [k, id] of blocks) if (id === 'minecraft:piston') {
+        const [x, y, z] = k.split(',').map(Number);
+        const p = { x, y, z };
+        heads.add(key(offset(p, pistonVectors[dimension.getBlock(p).permutation.getState('facing_direction')])));
+      }
+      for (const [k, id] of blocks) if (id === 'minecraft:observer') {
+        const [x, y, z] = k.split(',').map(Number);
+        const p = { x, y, z };
+        const watched = offset(p, observerVectors[dimension.getBlock(p).permutation.getState('minecraft:facing_direction')]);
+        assert.ok(!heads.has(key(watched)), `${plan.name}: a piston head would retrigger this observer`);
+        const target = dimension.getBlock(watched).typeId;
+        assert.ok(['minecraft:air', 'minecraft:water', 'minecraft:pumpkin_stem', 'minecraft:melon_stem'].includes(target), `${plan.name}: observes crop space or a stem, not ${target}`);
+      }
+    }
+  }
+});
+
+test('flood water has a continuous seven-block run over every crop lane to a hopper', () => {
+  for (const facing of FACINGS) for (let width = 3; width <= 9; width++) {
+    const { ctx, player, dimension } = harness();
+    player.getViewDirection = () => facing;
+    const plan = ctx.createFloodFarmPlan(player, width);
+    const { blocks } = replayContraption(ctx, dimension, plan);
+    let lanes = 0;
+    for (const [key, id] of blocks) if (id === 'minecraft:dispenser') {
+      const [x, y, z] = key.split(',').map(Number);
+      lanes++;
+      for (let step = 1; step <= 7; step++) {
+        const p = { x: x - step * facing.x, y, z: z - step * facing.z };
+        assert.equal(dimension.getBlock(p).typeId, 'minecraft:wheat', 'every space between source and collector is a crop');
+        assert.equal(dimension.getBlock({ ...p, y: y - 1 }).typeId, 'minecraft:farmland', 'water cannot drop into an irrigation hole');
+        // Hydration must be supplied beside the soil, at the soil's elevation.
+        let hydrated = false;
+        for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) {
+          if (dimension.getBlock({ x: p.x + dx, y: y - 1, z: p.z + dz }).typeId === 'minecraft:water') hydrated = true;
+        }
+        assert.ok(hydrated, 'farmland remains irrigated after the flood retracts');
+      }
+      assert.equal(dimension.getBlock({ x: x - 8 * facing.x, y: y - 1, z: z - 8 * facing.z }).typeId, 'minecraft:hopper', 'the last flowing water block drains over the collector');
+    }
+    assert.equal(lanes, width);
+  }
+});
+
+test('fruit spots have two clear blocks above soil, and stems and bamboo tips have local lighting', () => {
+  for (const facing of FACINGS) for (let size = 2; size <= 6; size++) {
+    const { ctx, player, dimension } = harness();
+    player.getViewDirection = () => facing;
+    for (const crop of [0, 1]) {
+      const plan = ctx.createFruitFarmPlan(player, size, crop);
+      replayContraption(ctx, dimension, plan);
+      for (let u = 0; u < size; u++) {
+        for (const y of [1, 2]) assert.equal(dimension.getBlock(ctx.localPoint(plan.context, 2 + 2 * u, y, 2)).typeId, 'minecraft:air', 'fruit growth space must not contain an observer');
+        assert.equal(dimension.getBlock(ctx.localPoint(plan.context, 2 + 2 * u, 4, 3)).typeId, 'minecraft:sea_lantern');
+      }
+    }
+    const cane = ctx.createSugarCaneFarmPlan(player, size, 1);
+    replayContraption(ctx, dimension, cane);
+    for (let x = 1; x <= size; x++) assert.equal(dimension.getBlock(ctx.localPoint(cane.context, x, 5, 2)).typeId, 'minecraft:sea_lantern', 'growth is not dependent on daylight');
+  }
+});
+
+test('cane and bamboo collect items on their planting row and seed kelp only into a completed tank', () => {
+  for (const facing of FACINGS) {
+    const { ctx, player, dimension } = harness();
+    player.getViewDirection = () => facing;
+    for (let width = 2; width <= 8; width++) for (const crop of [0, 1]) {
+      const plan = ctx.createSugarCaneFarmPlan(player, width, crop);
+      replayContraption(ctx, dimension, plan);
+      for (let x = 1; x <= width; x++) {
+        const at = (y) => ctx.localPoint(plan.context, x, y, 2);
+        assert.equal(dimension.getBlock(at(1)).typeId, 'minecraft:dirt', 'non-falling substrate above the cart');
+        assert.equal(dimension.getBlock(at(0)).typeId, 'minecraft:rail');
+        assert.equal(dimension.getBlock(at(-1)).typeId, 'minecraft:hopper');
+        const p = at(0);
+        assert.ok(plan.commands.includes(`summon minecraft:hopper_minecart ${p.x + 0.5} ${p.y} ${p.z + 0.5}`), 'a cart collects drops through the planting block');
+      }
+    }
+    for (let plants = 1; plants <= 6; plants++) {
+      const plan = ctx.createKelpFarmPlan(player, plants);
+      blockWorld(dimension);
+      for (const command of plan.commands) {
+        const edit = ctx.parseBlockCommand(command);
+        if (edit?.blockId === 'minecraft:kelp') {
+          const p = { x: edit.x1, y: edit.y1, z: edit.z1 };
+          for (const dy of [0, 1, 2]) assert.equal(dimension.getBlock({ ...p, y: p.y + dy }).typeId, 'minecraft:water', 'source water is installed before kelp');
+          assert.equal(dimension.getBlock({ x: p.x - facing.x, y: p.y + 2, z: p.z - facing.z }).typeId, 'minecraft:observer');
+        }
+        try { dimension.runCommand(command); } catch (e) { assert.equal(e.message, 'No blocks changed'); }
+      }
+    }
+  }
 });
